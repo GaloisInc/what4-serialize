@@ -1,0 +1,15 @@
+.stack-work/
+stack.yaml
+TAGS
+cabal.project
+dist-newstyle
+*.hi
+*.o
+*.dump-splices
+*.nix
+.*.swp
+dist
+result
+cabal.project.local
+*~
+/.ghc.environment.*

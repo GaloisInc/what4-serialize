@@ -1,0 +1,3 @@
+[submodule "deps/crucible"]
+	path = deps/crucible
+	url = git@github.com:GaloisInc/crucible.git

@@ -1,0 +1,2 @@
+packages: *.cabal
+          deps/crucible/what4/
