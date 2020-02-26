@@ -20,6 +20,7 @@ module What4.Serialize.Printer
   , serializeSymFn
   , serializeSymFnWithConfig
   , serializeBaseType
+  , convertBaseTypes
   , Config(..)
   , Result(..)
   , printSExpr
@@ -304,7 +305,7 @@ convertSymFn symFn@(W4.ExprSymFn _ symFnName symFnInfo _) = do
    W4.DefinedFnInfo argVars body _ -> do
      let sArgTs = convertBaseTypes (W4.fnArgTypes symFn)
          sRetT = convertBaseType (W4.fnReturnType symFn)
-     argsWithFreshNames <- let rawArgs = reverse $ FC.toListFC Some argVars
+     argsWithFreshNames <- let rawArgs = FC.toListFC Some argVars
                            in mapM getBoundVarWithFreshName rawArgs
      let (origBoundVars, freshArgNames) = unzip argsWithFreshNames
      -- Convert the body with the bound variable set and
@@ -620,7 +621,7 @@ convertAppExpr' = go . W4.appExprApp
         go (W4.IntegerToBV e wRepr)  = do
           s <- goE e
           return $ S.L [ident "integerToBV"
-                        , int $ toInteger (natValue wRepr)
+                        , nat $ natValue wRepr
                         , s]
 
         go (W4.StructCtor _tps es) = do
@@ -695,14 +696,7 @@ convertExprAssignment ::
   Ctx.Assignment (W4.Expr t) sh
   -> Memo t [SExpr]
 convertExprAssignment es =
-  case es of
-    Ctx.Empty -> return $ []
-    es' Ctx.:> e -> do
-      s <- convertExpr e
-      ss <- convertExprAssignment es'
-      return $ s:ss
-
-
+  mapM (\(Some e) -> convertExpr e) (FC.toListFC Some es)
 
 convertFnApp ::
   W4.ExprSymFn t args ret
@@ -729,7 +723,7 @@ convertBaseType tp = case tp of
   W4.BaseStringRepr si -> S.L [S.A $ AId "String", convertStringInfo si]
   W4.BaseComplexRepr -> S.A $ AId "Complex"
   W4.BaseBVRepr wRepr -> S.L [S.A (AId "BV"), S.A (AInt (NR.intValue wRepr)) ]
-  W4.BaseStructRepr tps -> S.L $ (S.A (AId "Struct")):(convertBaseTypes tps)
+  W4.BaseStructRepr tps -> S.L [ S.A (AId "Struct"), S.L (convertBaseTypes tps) ]
   W4.BaseArrayRepr ixs repr -> S.L [S.A (AId "Array"), S.L $ convertBaseTypes ixs , convertBaseType repr]
   _ -> error "can't print base type"
 
@@ -745,9 +739,4 @@ convertStringInfo W4.UnicodeRepr = ident "Unicode"
 convertBaseTypes ::
   Ctx.Assignment BaseTypeRepr tps
   -> [SExpr]
-convertBaseTypes = reverse . go
-  where go :: Ctx.Assignment BaseTypeRepr tps -> [SExpr]
-        go Ctx.Empty = []
-        go (tps Ctx.:> tp) = (convertBaseType tp):(go tps)
-
-
+convertBaseTypes asn = FC.toListFC convertBaseType asn
