@@ -69,31 +69,68 @@ type SExpr = S.WellFormedSExpr Atom
 
 data SomeSymFn t = forall dom ret. SomeSymFn (W4.SymFn t dom ret)
 
-type SymFnEnv sym = Map Text (SomeSymFn sym)
-type BaseEnv sym = Map Text (Some (W4.SymExpr sym))
-
-
 
 data Config sym =
   Config
   { cSym :: sym
   -- ^ The symbolic What4 backend being used.
-  , cSymFnEnv :: SymFnEnv sym
-  -- ^ The environment mapping names to defined What4
-  -- SymFns.
-  , cBaseEnv :: BaseEnv sym
-  -- ^ The environment mapping names to defined variables
-  -- with What4 BaseTypes.
+  , cSymFnLookup :: Text -> IO (Maybe (SomeSymFn sym))
+  -- ^ The mapping of names to defined What4 SymFns.
+  , cExprLookup :: Text -> IO (Maybe (Some (W4.SymExpr sym)))
+  -- ^ The mapping of names to defined What4 expressions.
   }
 
 defaultConfig :: sym -> Config sym
-defaultConfig sym = Config {cSym = sym, cSymFnEnv = Map.empty, cBaseEnv = Map.empty}
+defaultConfig sym = Config { cSym = sym
+                           , cSymFnLookup = const (return Nothing)
+                           , cExprLookup = const (return Nothing)
+                           }
 
 
-type Processor sym a = E.ExceptT String (R.ReaderT (Config sym) IO) a
+-- | The lexical environment for parsing s-expressions and
+-- procesing them into What4 terms.
+data ProcessorEnv sym =
+  ProcessorEnv
+  { procSym :: sym
+  -- ^ The symbolic What4 backend being used.
+  , procSymFnLookup :: Text -> IO (Maybe (SomeSymFn sym))
+    -- ^ The user-specified mapping of names to defined What4 SymFns.
+  , procExprLookup :: Text -> IO (Maybe (Some (W4.SymExpr sym)))
+  -- ^ The user-specified mapping of names to defined What4 expressions.
+  , procLetEnv :: Map Text (Some (W4.SymExpr sym))
+  -- ^ The current lexical environment w.r.t. let-bindings
+  -- encountered while parsing. N.B., these bindings are
+  -- checked _before_ the "global" bindings implied by the
+  -- user-specified lookup functions.
+  , procLetFnEnv :: Map Text (SomeSymFn sym)
+  -- ^ The current lexical symfn environment
+  -- w.r.t. letfn-bindings encountered while parsing. N.B.,
+  -- these bindings are checked _before_ the "global"
+  -- bindings implied by the user-specified lookup
+  -- functions.
+  }
 
-runProcessor :: Config sym -> Processor sym a -> IO (Either String a)
-runProcessor cfg action = R.runReaderT (E.runExceptT action) cfg
+type Processor sym a = E.ExceptT String (R.ReaderT (ProcessorEnv sym) IO) a
+
+runProcessor :: ProcessorEnv sym -> Processor sym a -> IO (Either String a)
+runProcessor env action = R.runReaderT (E.runExceptT action) env
+
+lookupExpr :: Text -> Processor sym (Maybe (Some (W4.SymExpr sym)))
+lookupExpr nm = do
+  userLookupFn <- R.asks procExprLookup
+  letEnv <- R.asks procLetEnv
+  case Map.lookup nm letEnv of
+    Nothing -> liftIO $ userLookupFn nm
+    res -> return res
+
+lookupFn :: Text -> Processor sym (Maybe (SomeSymFn sym))
+lookupFn nm = do
+  userLookupFn <- R.asks procSymFnLookup
+  letEnv <- R.asks procLetFnEnv
+  case Map.lookup nm letEnv of
+    Nothing -> liftIO $ userLookupFn nm
+    res -> return res
+
 
 -- | @(deserializeExpr sym)@ is equivalent
 -- to @(deserializeExpr' (defaultConfig sym))@.
@@ -110,7 +147,13 @@ deserializeExprWithConfig ::
   => Config sym
   -> SExpr
   -> IO (Either String (Some (W4.SymExpr sym)))
-deserializeExprWithConfig cfg sexpr = runProcessor cfg (readExpr sexpr)
+deserializeExprWithConfig cfg sexpr = runProcessor env (readExpr sexpr)
+  where env = ProcessorEnv { procSym = cSym cfg
+                           , procSymFnLookup = cSymFnLookup cfg
+                           , procExprLookup = cExprLookup cfg
+                           , procLetEnv = Map.empty
+                           , procLetFnEnv = Map.empty
+                           }
 
 -- | @(deserializeSymFn sym)@ is equivalent
 -- to @(deserializeSymFn' (defaultConfig sym))@.
@@ -127,7 +170,14 @@ deserializeSymFnWithConfig ::
   => Config sym
   -> SExpr
   -> IO (Either String (SomeSymFn sym))
-deserializeSymFnWithConfig cfg sexpr = runProcessor cfg (readSymFn sexpr)
+deserializeSymFnWithConfig cfg sexpr = runProcessor env (readSymFn sexpr)
+  where env = ProcessorEnv { procSym = cSym cfg
+                           , procSymFnLookup = cSymFnLookup cfg
+                           , procExprLookup = cExprLookup cfg
+                           , procLetEnv = Map.empty
+                           , procLetFnEnv = Map.empty
+                           }
+
 
 deserializeBaseType ::
   SExpr
@@ -436,8 +486,8 @@ readApp ::
   -> [SExpr]
   -> Processor sym (Some (W4.SymExpr sym))
 readApp (S.WFSAtom (AId "call")) (S.WFSAtom (AId fnName):operands) = do
-  sym <- R.asks cSym
-  maybeFn <- R.asks $ (Map.lookup fnName) . cSymFnEnv
+  sym <- R.asks procSym
+  maybeFn <- lookupFn fnName
   case maybeFn of
     Just (SomeSymFn fn) -> do
       args <- mapM readExpr operands
@@ -449,7 +499,7 @@ readApp (S.WFSAtom (AId "call")) (S.WFSAtom (AId fnName):operands) = do
 readApp opRaw@(S.WFSAtom (AId "call")) operands = E.throwError
   $ "Unrecognized use of `call`: " ++ (T.unpack (printSExpr mempty (S.L (opRaw:operands))))
 readApp opRaw@(S.WFSAtom (AId operator)) operands = do
-  sym <- R.reader cSym
+  sym <- R.reader procSym
   prefixError ("in reading expression:\n"
                ++(T.unpack $ printSExpr mempty $ S.WFSList (opRaw:operands))++"\n") $
   -- Parse an expression of the form @(fnname operands ...)@
@@ -603,7 +653,7 @@ readApp opRaw@(S.WFSAtom (AId operator)) operands = do
 -- Parse an expression of the form @((_ extract i j) x)@.
 readApp (S.WFSList [S.WFSAtom (AId "_"), S.WFSAtom (AId "extract"), S.WFSAtom (AInt iInt), S.WFSAtom (AInt jInt)])
   args = prefixError "in reading extract expression: " $ do
-  sym <- R.reader cSym
+  sym <- R.reader procSym
   (Some arg) <- readOneArg args
   -- The SMT-LIB spec represents extracts differently than Crucible does. Per
   -- SMT: "extraction of bits i down to j from a bitvector of size m to yield a
@@ -640,7 +690,7 @@ readApp (S.WFSList [S.WFSAtom (AId "_"), S.WFSAtom (AId extend), S.WFSAtom (AInt
   args
   | extend == "zero_extend" ||
     extend == "sign_extend" = prefixError (printf "in reading %s expression: " extend) $ do
-      sym <- R.reader cSym
+      sym <- R.reader procSym
       Some arg <- readOneArg args
       Some iNat <- intToNatM iInt
       iPositive <- fromMaybeError "must extend by a positive length" $ isPosNat iNat
@@ -707,7 +757,7 @@ readLetExpr ::
 readLetExpr [] body = readExpr body
 readLetExpr ((S.WFSList [S.WFSAtom (AId x), e]):rst) body = do
   v <- readExpr e
-  R.local (\c -> c {cBaseEnv = (Map.insert x v) $ cBaseEnv c}) $
+  R.local (\c -> c {procLetEnv = (Map.insert x v) $ procLetEnv c}) $
     readLetExpr rst body
 readLetExpr bindings _body = E.throwError $
   "invalid s-expression for let-bindings: " ++ (show bindings)
@@ -722,8 +772,8 @@ readLetFnExpr ::
   -> Processor sym (Some (W4.SymExpr sym))
 readLetFnExpr [] body = readExpr body
 readLetFnExpr ((S.WFSList [S.WFSAtom (AId f), e]):rst) body = do
-  v <- readExpr e
-  R.local (\c -> c {cBaseEnv = (Map.insert f v) $ cBaseEnv c}) $
+  v <- readSymFn e
+  R.local (\c -> c {procLetFnEnv = (Map.insert f v) $ procLetFnEnv c}) $
     readLetExpr rst body
 readLetFnExpr bindings _body = E.throwError $
   "invalid s-expression for let-bindings: " ++ (show bindings)
@@ -735,19 +785,19 @@ readExpr ::
   => SExpr
   -> Processor sym (Some (W4.SymExpr sym))
 readExpr (S.WFSAtom (AInt n)) = do
-  sym <- R.reader cSym
+  sym <- R.reader procSym
   liftIO $ (Some <$> W4.intLit sym n)
 readExpr (S.WFSAtom (ANat n)) = do
-  sym <- R.reader cSym
+  sym <- R.reader procSym
   liftIO $ (Some <$> W4.natLit sym n)
 readExpr (S.WFSAtom (ABool b)) = do
-  sym <- R.reader cSym
+  sym <- R.reader procSym
   liftIO $ return $ Some $ W4.backendPred sym b
 readExpr (S.WFSAtom (AStr _)) = E.throwError $ "TODO: support readExpr for string literals"
 readExpr (S.WFSAtom (AReal _)) = E.throwError $ "TODO: support readExpr for real literals"
 readExpr (S.WFSAtom (ABV len val)) = do
   -- This is a bitvector literal.
-  sym <- R.reader cSym
+  sym <- R.reader procSym
   -- The following two patterns should never fail, given that during parsing we
   -- can only construct BVs with positive length.
   case someNat (toInteger len) of
@@ -760,7 +810,7 @@ readExpr (S.WFSAtom (ABV len val)) = do
   -- liftIO $ withLeqProof pf (Some <$> W4.bvLit sym lenRepr val)
 -- Let-bound variable
 readExpr (S.WFSAtom (AId name)) = do
-  maybeBinding <- R.asks $ (Map.lookup name) . cBaseEnv
+  maybeBinding <- lookupExpr name
   -- We first check the local lexical environment (i.e., the
   -- in-scope let-bindings) before consulting the "global"
   -- scope.
@@ -843,7 +893,7 @@ readSymFn (S.WFSList [ S.WFSAtom (AId "definedfn")
                      , S.WFSList argVarsRaw
                      , bodyRaw
                      ]) = do
-  sym <- R.reader cSym
+  sym <- R.reader procSym
   symFnName <- case W4.userSymbol (T.unpack rawSymFnName) of
                  Left _ -> E.throwError $ ("Bad symbolic function name : "
                                            ++ (T.unpack rawSymFnName))
@@ -864,7 +914,7 @@ readSymFn (S.WFSList [ S.WFSAtom (AId "definedfn")
                                    $ zip argNames
                                    $ map (someVarExpr sym) argVars
                  in R.local
-                    (\c -> c {cBaseEnv = Map.union (cBaseEnv c) newBindings})
+                    (\env -> env {procLetEnv = Map.union (procLetEnv env) newBindings})
                     $ readExpr bodyRaw
   Some argVarAssignment <- return $ Ctx.fromList argVars
   let expand args = allFC W4.baseIsConcrete args
@@ -876,7 +926,7 @@ readSymFn (S.WFSList [ S.WFSAtom (AId "uninterpfn")
                      , S.WFSAtom (AStr rawSymFnName)
                      , rawFnType
                      ]) = do
-  sym <- R.reader cSym
+  sym <- R.reader procSym
   symFnName <- case W4.userSymbol (T.unpack rawSymFnName) of
                  Left _ -> E.throwError $ ("Bad symbolic function name : "
                                            ++ (T.unpack rawSymFnName))
