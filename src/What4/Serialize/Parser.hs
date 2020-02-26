@@ -23,9 +23,11 @@ module What4.Serialize.Parser
   , deserializeSymFn
   , deserializeSymFnWithConfig
   , deserializeBaseType
+  , readBaseTypes
   , Atom(..)
   , S.WellFormedSExpr(..)
   , Config(..)
+  , defaultConfig
   , SomeSymFn(..)
   , type SExpr
   , parseSExpr
@@ -49,6 +51,7 @@ import qualified Data.Parameterized.Ctx as Ctx
 import qualified Data.Parameterized.Context as Ctx
 import           Data.Parameterized.Classes
 import           Data.Parameterized.Some ( Some(..) )
+import qualified Data.Parameterized.TraversableFC as FC
 import           Data.Parameterized.TraversableFC ( allFC )
 import           What4.BaseTypes
 
@@ -242,17 +245,7 @@ readBaseTypes ::
   => SExpr
   -> m (Some (Ctx.Assignment BaseTypeRepr))
 readBaseTypes sexpr@(S.WFSAtom _) = E.throwError $ "expected list of base types: " ++ show sexpr
-readBaseTypes (S.WFSList sexprs) =
-  go sexprs
-  where
-    go :: [SExpr] -> m (Some (Ctx.Assignment BaseTypeRepr))
-    go sexpr =
-      case sexpr of
-        [] -> return (Some Ctx.empty)
-        (s:rest) -> do
-          Some tp <- readBaseType s
-          Some tps <- go rest
-          return $ Some $ Ctx.extend tps tp
+readBaseTypes (S.WFSList sexprs) = Ctx.fromList <$> mapM readBaseType sexprs
 
 -- ** Parsing definitions
 
@@ -735,31 +728,20 @@ expectArrayWithIndex dimRepr (BaseArrayRepr idxTpReprs resRepr) =
         _ -> E.throwError "multidimensional arrays are not supported"
 expectArrayWithIndex _ repr = E.throwError $ unwords ["expected an array, got", show repr]
 
-
-exprAssignment' ::
-  forall sym ctx ex . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym), W4.IsExpr ex)
-  => Ctx.Assignment BaseTypeRepr ctx
-  -> [Some ex]
-  -> Int
-  -> Int
-  -> Processor sym (Ctx.Assignment ex ctx)
-exprAssignment' (Ctx.viewAssign -> Ctx.AssignEmpty) [] _ _ = return Ctx.empty
-exprAssignment' (Ctx.viewAssign -> Ctx.AssignExtend restTps tp) (Some e : restExprs) idx len = do
-  Refl <- case testEquality tp (W4.exprType e) of
-            Just pf -> return pf
-            Nothing -> E.throwError ("unexpected type in index " ++ (show idx) ++ " (total length " ++ (show len)
-                                     ++ "), assigning to: " ++ show tp ++ " from expr: " ++ show (W4.exprType e))
-  restAssn <- exprAssignment' restTps restExprs (idx + 1) len
-  return $ restAssn Ctx.:> e
-exprAssignment' _ _ _  _ = E.throwError "mismatching numbers of arguments"
-
 exprAssignment ::
-  forall sym ctx ex . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym), W4.IsExpr ex)
+  forall sym ctx ex . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym), ShowF ex, W4.IsExpr ex)
   => Ctx.Assignment BaseTypeRepr ctx
   -> [Some ex]
   -> Processor sym (Ctx.Assignment ex ctx)
-exprAssignment tpAssn exs = exprAssignment' tpAssn (reverse exs) 0 (Ctx.sizeInt $ Ctx.size tpAssn)
-
+exprAssignment tpAssns exs = do
+  Some exsAsn <- return $ Ctx.fromList exs
+  exsRepr <- return $ FC.fmapFC W4.exprType exsAsn
+  case testEquality exsRepr tpAssns of
+    Just Refl -> return exsAsn
+    Nothing -> E.throwError $
+      "Unexpected expression types for " ++ show exsAsn
+      ++ "\nExpected: " ++ show tpAssns
+      ++ "\nGot: " ++ show exsRepr
 
 
 -- | Given the s-expressions for the bindings and body of a
@@ -855,21 +837,13 @@ readExprs ::
   forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
   => [SExpr]
   -> Processor sym [Some (W4.SymExpr sym)]
-readExprs [] = return []
-readExprs (e:rest) = do
-  e' <- readExpr e
-  rest' <- readExprs rest
-  return $ e' : rest'
+readExprs exprs = mapM readExpr exprs
 
 readExprsAsAssignment ::
   forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
   => [SExpr]
   -> Processor sym (Some (Ctx.Assignment (W4.SymExpr sym)))
-readExprsAsAssignment [] = return $ Some Ctx.empty
-readExprsAsAssignment (s:rest) = do
-  Some e <- readExpr s
-  Some ss <- readExprsAsAssignment rest
-  return $ Some (Ctx.extend ss e)
+readExprsAsAssignment exprs = Ctx.fromList <$> readExprs exprs
 
 
 readFnType ::
@@ -900,31 +874,6 @@ readFnArgs ((S.WFSAtom (AId name)):rest) = do
 readFnArgs (badArg:_) =
   E.throwError $ ("invalid function argument encountered: "
                   ++ (T.unpack $ printSExpr mempty badArg))
-
-mkBoundVarAssignment :: 
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
-  => sym
-  -> [Some (W4.BoundVar sym)]
-  -> (Some (Ctx.Assignment (W4.BoundVar sym)))
-  -- TODO should we reverse this? It makes it syntactically look
-  -- like the What4 source... CHECK PRINTER!
-mkBoundVarAssignment _sym vars = go $ reverse vars
-  where go [] = Some Ctx.empty
-        go ((Some x):xs) =
-          case go xs of
-            (Some ys) -> Some (Ctx.extend ys x)
-
-mkBaseTypeAssignment ::
-  [Some (W4.BaseTypeRepr)]
-  -> (Some (Ctx.Assignment W4.BaseTypeRepr))
-  -- TODO should we reverse this? It makes it syntactically look
-  -- like the What4 source... CHECK PRINTER!
-mkBaseTypeAssignment tys = go $ reverse tys
-  where go [] = Some Ctx.empty
-        go ((Some t):ts) =
-          case go ts of
-            (Some ts') -> Some (Ctx.extend ts' t)
-
 
 someVarExpr ::
     forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
@@ -967,11 +916,10 @@ readSymFn (S.WFSList [ S.WFSAtom (AId "definedfn")
                  in R.local
                     (\env -> env {procLetEnv = Map.union (procLetEnv env) newBindings})
                     $ readExpr bodyRaw
-  case mkBoundVarAssignment sym argVars of
-    Some argVarAssignment -> do
-      let expand args = allFC W4.baseIsConcrete args
-      symFn <- liftIO $ W4.definedFn sym symFnName argVarAssignment body expand
-      return $ SomeSymFn symFn
+  Some argVarAssignment <- return $ Ctx.fromList argVars
+  let expand args = allFC W4.baseIsConcrete args
+  symFn <- liftIO $ W4.definedFn sym symFnName argVarAssignment body expand
+  return $ SomeSymFn symFn
 readSymFn badSExp@(S.WFSList ((S.WFSAtom (AId "definedfn")):_)) =
   E.throwError $ ("invalid `definedfn`: " ++ (T.unpack $ printSExpr mempty badSExp))
 readSymFn (S.WFSList [ S.WFSAtom (AId "uninterpfn")
@@ -984,10 +932,9 @@ readSymFn (S.WFSList [ S.WFSAtom (AId "uninterpfn")
                                            ++ (T.unpack rawSymFnName))
                  Right solverSym -> return solverSym
   (argTys, (Some retTy)) <- readFnType rawFnType
-  case mkBaseTypeAssignment argTys of
-    (Some domain) -> do
-      symFn <- liftIO $ W4.freshTotalUninterpFn sym symFnName domain retTy
-      return $ SomeSymFn symFn
+  Some domain <- return $ Ctx.fromList argTys
+  symFn <- liftIO $ W4.freshTotalUninterpFn sym symFnName domain retTy
+  return $ SomeSymFn symFn
 readSymFn badSExp@(S.WFSList ((S.WFSAtom (AId "uninterpfn")):_)) =
   E.throwError $ ("invalid `uninterpfn`: " ++ (T.unpack $ printSExpr mempty badSExp))
 readSymFn sexpr = E.throwError ("invalid function definition: "
