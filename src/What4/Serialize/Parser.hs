@@ -798,14 +798,13 @@ readExpr (S.WFSAtom (ABool b)) = do
 readExpr (S.WFSAtom (AStr prefix content)) = do
   sym <- R.reader procSym
   case prefix of
-    "u" -> do
+    (Some W4.UnicodeRepr) -> do
       s <- liftIO $ W4.stringLit sym $ W4.UnicodeLiteral content
       return $ Some $ s
-    "u8" -> do
+    (Some W4.Char8Repr) -> do
       s <- liftIO $ W4.stringLit sym $ W4.Char8Literal $ T.encodeUtf8 content
       return $ Some $ s
-    "u16" -> E.throwError $ "Char16 strings are not yet supported"
-    _ -> E.throwError $ "unsupported string literal prefix: " ++ (T.unpack prefix)
+    (Some W4.Char16Repr) -> E.throwError $ "Char16 strings are not yet supported"
 readExpr (S.WFSAtom (AReal _)) = E.throwError $ "TODO: support readExpr for real literals"
 readExpr (S.WFSAtom (ABV len val)) = do
   -- This is a bitvector literal.
@@ -900,7 +899,7 @@ readSymFn ::
   => SExpr
   -> Processor sym (SomeSymFn sym)
 readSymFn (S.WFSList [ S.WFSAtom (AId "definedfn")
-                     , S.WFSAtom (AStr "" rawSymFnName)
+                     , S.WFSAtom (AStr _ rawSymFnName)
                      , rawFnType
                      , S.WFSList argVarsRaw
                      , bodyRaw
@@ -935,7 +934,7 @@ readSymFn (S.WFSList [ S.WFSAtom (AId "definedfn")
 readSymFn badSExp@(S.WFSList ((S.WFSAtom (AId "definedfn")):_)) =
   E.throwError $ ("invalid `definedfn`: " ++ (T.unpack $ printSExpr mempty badSExp))
 readSymFn (S.WFSList [ S.WFSAtom (AId "uninterpfn")
-                     , S.WFSAtom (AStr "" rawSymFnName)
+                     , S.WFSAtom (AStr _ rawSymFnName)
                      , rawFnType
                      ]) = do
   sym <- R.reader procSym
