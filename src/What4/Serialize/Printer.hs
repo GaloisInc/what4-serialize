@@ -51,6 +51,7 @@ import qualified Data.Parameterized.TraversableFC as FC
 
 import           Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import           Data.Word ( Word64 )
 import qualified Control.Monad as M
 import           Control.Monad.State.Strict (State)
@@ -65,6 +66,7 @@ import qualified What4.Expr.Builder as W4
 import qualified What4.Expr.WeightedSum as WSum
 import qualified What4.Interface as W4
 import qualified What4.Symbol as W4
+import qualified What4.Utils.StringLiteral as W4S
 
 
 import           What4.Serialize.SETokens ( Atom(..), printSExpr
@@ -317,7 +319,7 @@ convertSymFn symFn@(W4.ExprSymFn _ symFnName symFnInfo _) = do
                                    , envFreeVarEnv = fvEnv OMap.<>| (OMap.fromList argsWithFreshNames)})
               $ convertExprWithLet body
      return $ S.L [ ident "definedfn"
-                  , string $ W4.solverSymbolAsText symFnName
+                  , string "" $ W4.solverSymbolAsText symFnName
                   , S.L ((ident "->"):sArgTs ++ [sRetT])
                   , S.L $ map ident freshArgNames
                   , sExpr
@@ -326,7 +328,7 @@ convertSymFn symFn@(W4.ExprSymFn _ symFnName symFnInfo _) = do
      let sArgTs = convertBaseTypes argTs
          sRetT = convertBaseType retT
      in return $ S.L [ ident "uninterpfn"
-                     , string $ W4.solverSymbolAsText symFnName
+                     , string "" $ W4.solverSymbolAsText symFnName
                      , S.L ((ident "->"):sArgTs ++ [sRetT])
                      ]
    W4.MatlabSolverFnInfo _msfn _argTs _body ->
@@ -412,7 +414,13 @@ convertExpr initialExpr = do
         go (W4.SemiRingLiteral W4.SemiRingIntegerRepr val _) = return $ int val -- do we need/want these?
         go (W4.SemiRingLiteral W4.SemiRingRealRepr val _) = return $ real val
         go (W4.SemiRingLiteral (W4.SemiRingBVRepr _ sz) val _) = return $ bitvec (fromInteger (toInteger (widthVal sz))) val
-        go (W4.StringExpr {}) = error "StringExpr is not yet supported"
+        go (W4.StringExpr str _) =
+          case (W4.stringLiteralInfo str) of
+            W4.UnicodeRepr -> return $ string "u" (W4S.fromUnicodeLit str)
+            W4.Char8Repr -> return $ string "u8" $ T.decodeUtf8 $ W4S.fromChar8Lit str
+            W4.Char16Repr -> error "Char16 strings are not yet supported"
+              -- TODO - there is no `W4S.toLEByteString` currently... hmm...
+              -- return $ string "u16" $ T.decodeUtf16LE $ W4S.toLEByteString $ W4S.fromChar16Lit str
         go (W4.BoolExpr b _) = return $ bool b
         go (W4.AppExpr appExpr) = convertAppExpr' appExpr
         go (W4.NonceAppExpr nae) =

@@ -45,6 +45,7 @@ import qualified Data.SCargot.Repr.WellFormed as S
 import qualified Data.List as List
 import           Data.Text ( Text )
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import           Text.Printf ( printf )
 
 import qualified Data.Parameterized.Ctx as Ctx
@@ -328,6 +329,7 @@ lookupOp :: forall sym . W4.IsSymExprBuilder sym => Text -> Maybe (Op sym)
 lookupOp = \case
   -- -- -- Boolean ops -- -- --
   "andp" -> Just $ Op2 knownRepr $ W4.andPred
+  "orp" -> Just $ Op2 knownRepr $ W4.orPred
   "xorp" -> Just $ Op2 knownRepr $ W4.xorPred
   "notp" -> Just $ Op1 knownRepr $ W4.notPred
   -- -- -- Natural ops -- -- --
@@ -793,7 +795,17 @@ readExpr (S.WFSAtom (ANat n)) = do
 readExpr (S.WFSAtom (ABool b)) = do
   sym <- R.reader procSym
   liftIO $ return $ Some $ W4.backendPred sym b
-readExpr (S.WFSAtom (AStr _)) = E.throwError $ "TODO: support readExpr for string literals"
+readExpr (S.WFSAtom (AStr prefix content)) = do
+  sym <- R.reader procSym
+  case prefix of
+    "u" -> do
+      s <- liftIO $ W4.stringLit sym $ W4.UnicodeLiteral content
+      return $ Some $ s
+    "u8" -> do
+      s <- liftIO $ W4.stringLit sym $ W4.Char8Literal $ T.encodeUtf8 content
+      return $ Some $ s
+    "u16" -> E.throwError $ "Char16 strings are not yet supported"
+    _ -> E.throwError $ "unsupported string literal prefix: " ++ (T.unpack prefix)
 readExpr (S.WFSAtom (AReal _)) = E.throwError $ "TODO: support readExpr for real literals"
 readExpr (S.WFSAtom (ABV len val)) = do
   -- This is a bitvector literal.
@@ -888,7 +900,7 @@ readSymFn ::
   => SExpr
   -> Processor sym (SomeSymFn sym)
 readSymFn (S.WFSList [ S.WFSAtom (AId "definedfn")
-                     , S.WFSAtom (AStr rawSymFnName)
+                     , S.WFSAtom (AStr "" rawSymFnName)
                      , rawFnType
                      , S.WFSList argVarsRaw
                      , bodyRaw
@@ -923,7 +935,7 @@ readSymFn (S.WFSList [ S.WFSAtom (AId "definedfn")
 readSymFn badSExp@(S.WFSList ((S.WFSAtom (AId "definedfn")):_)) =
   E.throwError $ ("invalid `definedfn`: " ++ (T.unpack $ printSExpr mempty badSExp))
 readSymFn (S.WFSList [ S.WFSAtom (AId "uninterpfn")
-                     , S.WFSAtom (AStr rawSymFnName)
+                     , S.WFSAtom (AStr "" rawSymFnName)
                      , rawFnType
                      ]) = do
   sym <- R.reader procSym

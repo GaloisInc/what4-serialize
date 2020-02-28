@@ -31,22 +31,31 @@ import           Data.Ratio
 
 import           Prelude
 
-data Atom = AId Text
-           | AStr Text
-           | AInt Integer
-           | ANat Natural
-           | AReal Rational
-           | ABV Int Integer
-           | ABool Bool
-           deriving (Show, Eq, Ord)
+data Atom =
+  AId Text
+  -- ^ An identifier.
+  | AStr Text Text
+  -- ^ A prefix followed by a string literal
+  -- (.e.g, AStr "u" "Hello World" is serialize as `#u"Hello World"`).
+  | AInt Integer
+  -- ^ Integer (i.e., unbounded) literal.
+  | ANat Natural
+  -- ^ Natural (i.e., unbounded) literal.
+  | AReal Rational
+  -- ^ Real (i.e., unbounded) literal.
+  | ABV Int Integer
+  -- ^ Bitvector, width and then value.
+  | ABool Bool
+  -- ^ Boolean literal.
+  deriving (Show, Eq, Ord)
 
 type SExpr = SC.WellFormedSExpr Atom
 
-string :: Text -> SExpr
-string = SC.A . AStr
+string :: Text -> Text -> SExpr
+string prefix str = SC.A $ AStr prefix str
 
-string' :: String -> SExpr
-string' = SC.A . AStr . T.pack
+string' :: String -> String -> SExpr
+string' prefix str = SC.A $ AStr (T.pack prefix) (T.pack str)
 
 
 -- | Lift an unquoted identifier.
@@ -107,7 +116,7 @@ printAtom a =
   case a of
     AId s -> s
     --AQuoted s -> T.pack ('\'' : s)
-    AStr s -> T.pack (show s)
+    AStr prefix s -> "#"<>prefix<>"\""<>s<>"\""
     AInt i -> T.pack (show i)
     ANat n -> T.pack $ "#u"++(show n)
     AReal r -> T.pack $ "#r"++(show (numerator r))++"/"++(show (denominator r))
@@ -133,12 +142,14 @@ parseId = T.pack <$> ((:) <$> first <*> P.many rest)
   where first = P.letter P.<|> P.oneOf "@+-=<>_."
         rest = P.letter P.<|> P.digit P.<|> P.oneOf "+-=<>_."
 
-parseStr :: Parser Text
+parseStr :: Parser (Text, Text)
 parseStr = do
+  _ <- P.char '#'
+  prefix <- P.many P.alphaNum
   _ <- P.char '"'
-  s <- P.many (P.noneOf ['"'])
+  str <- concat <$> P.many ( do { _ <- P.char '\\'; c <- P.anyChar ; return ['\\',c]} P.<|> P.many1 (P.noneOf ('"':"\\")))
   _ <- P.char '"'
-  return $ T.pack s
+  return $ (T.pack prefix, T.pack str)
 
 parseReal :: Parser Rational
 parseReal = do
@@ -184,7 +195,7 @@ parseAtom
   P.<|> P.try (AReal <$> parseReal)
   P.<|> P.try (AInt  <$> parseInt)
   P.<|> P.try (AId   <$> parseId)
-  P.<|> P.try (AStr  <$> parseStr)
+  P.<|> P.try (uncurry AStr  <$> parseStr)
   P.<|> P.try (ABool <$> parseBool)
   P.<|> P.try (uncurry ABV <$> parseBV)
   P.<|> P.unexpected "Invalid s-expression atom"
