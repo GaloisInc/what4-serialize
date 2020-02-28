@@ -3,6 +3,8 @@
 
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE ExistentialQuantification #-}
 
 module What4.Serialize.SETokens
     ( Atom(..)
@@ -29,12 +31,15 @@ import           Text.Parsec.Text ( Parser )
 import           Text.Printf ( printf )
 import           Data.Ratio
 
+import           Data.Parameterized.Some ( Some(..))
+import qualified What4.BaseTypes as W4
+
 import           Prelude
 
 data Atom =
   AId Text
   -- ^ An identifier.
-  | AStr Text Text
+  | AStr (Some W4.StringInfoRepr) Text
   -- ^ A prefix followed by a string literal
   -- (.e.g, AStr "u" "Hello World" is serialize as `#u"Hello World"`).
   | AInt Integer
@@ -51,12 +56,11 @@ data Atom =
 
 type SExpr = SC.WellFormedSExpr Atom
 
-string :: Text -> Text -> SExpr
-string prefix str = SC.A $ AStr prefix str
+string :: Some W4.StringInfoRepr -> Text -> SExpr
+string strInfo str = SC.A $ AStr strInfo str
 
-string' :: String -> String -> SExpr
-string' prefix str = SC.A $ AStr (T.pack prefix) (T.pack str)
-
+string' :: Some W4.StringInfoRepr -> String -> SExpr
+string' strInfo str = SC.A $ AStr strInfo (T.pack str)
 
 -- | Lift an unquoted identifier.
 ident :: Text -> SExpr
@@ -116,7 +120,7 @@ printAtom a =
   case a of
     AId s -> s
     --AQuoted s -> T.pack ('\'' : s)
-    AStr prefix s -> "#"<>prefix<>"\""<>s<>"\""
+    AStr si s -> (stringInfoToPrefix si)<>"\""<>s<>"\""
     AInt i -> T.pack (show i)
     ANat n -> T.pack $ "#u"++(show n)
     AReal r -> T.pack $ "#r"++(show (numerator r))++"/"++(show (denominator r))
@@ -142,14 +146,26 @@ parseId = T.pack <$> ((:) <$> first <*> P.many rest)
   where first = P.letter P.<|> P.oneOf "@+-=<>_."
         rest = P.letter P.<|> P.digit P.<|> P.oneOf "+-=<>_."
 
-parseStr :: Parser (Text, Text)
+stringInfoToPrefix :: Some W4.StringInfoRepr -> Text
+stringInfoToPrefix (Some W4.Char16Repr) = "#char16"
+stringInfoToPrefix (Some W4.Char8Repr) = "#char8"
+stringInfoToPrefix (Some W4.UnicodeRepr) = ""
+
+
+parseStrInfo :: Parser (Some W4.StringInfoRepr)
+parseStrInfo =
+  P.try (P.string "#char16" >> return (Some W4.Char16Repr))
+  P.<|> P.try (P.string "#char8" >> return (Some W4.Char8Repr))
+  P.<|> (return (Some W4.UnicodeRepr))
+
+
+parseStr :: Parser (Some W4.StringInfoRepr, Text)
 parseStr = do
-  _ <- P.char '#'
-  prefix <- P.many P.alphaNum
+  prefix <- parseStrInfo
   _ <- P.char '"'
   str <- concat <$> P.many ( do { _ <- P.char '\\'; c <- P.anyChar ; return ['\\',c]} P.<|> P.many1 (P.noneOf ('"':"\\")))
   _ <- P.char '"'
-  return $ (T.pack prefix, T.pack str)
+  return $ (prefix, T.pack str)
 
 parseReal :: Parser Rational
 parseReal = do

@@ -319,7 +319,7 @@ convertSymFn symFn@(W4.ExprSymFn _ symFnName symFnInfo _) = do
                                    , envFreeVarEnv = fvEnv OMap.<>| (OMap.fromList argsWithFreshNames)})
               $ convertExprWithLet body
      return $ S.L [ ident "definedfn"
-                  , string "" $ W4.solverSymbolAsText symFnName
+                  , string (Some W4.UnicodeRepr) $ W4.solverSymbolAsText symFnName
                   , S.L ((ident "->"):sArgTs ++ [sRetT])
                   , S.L $ map ident freshArgNames
                   , sExpr
@@ -328,7 +328,7 @@ convertSymFn symFn@(W4.ExprSymFn _ symFnName symFnInfo _) = do
      let sArgTs = convertBaseTypes argTs
          sRetT = convertBaseType retT
      in return $ S.L [ ident "uninterpfn"
-                     , string "" $ W4.solverSymbolAsText symFnName
+                     , string (Some W4.UnicodeRepr) $ W4.solverSymbolAsText symFnName
                      , S.L ((ident "->"):sArgTs ++ [sRetT])
                      ]
    W4.MatlabSolverFnInfo _msfn _argTs _body ->
@@ -416,11 +416,11 @@ convertExpr initialExpr = do
         go (W4.SemiRingLiteral (W4.SemiRingBVRepr _ sz) val _) = return $ bitvec (fromInteger (toInteger (widthVal sz))) val
         go (W4.StringExpr str _) =
           case (W4.stringLiteralInfo str) of
-            W4.UnicodeRepr -> return $ string "u" (W4S.fromUnicodeLit str)
-            W4.Char8Repr -> return $ string "u8" $ T.decodeUtf8 $ W4S.fromChar8Lit str
+            W4.UnicodeRepr -> return $ string (Some W4.UnicodeRepr) (W4S.fromUnicodeLit str)
+            W4.Char8Repr -> return $ string (Some W4.Char8Repr) $ T.decodeUtf8 $ W4S.fromChar8Lit str
             W4.Char16Repr -> error "Char16 strings are not yet supported"
               -- TODO - there is no `W4S.toLEByteString` currently... hmm...
-              -- return $ string "u16" $ T.decodeUtf16LE $ W4S.toLEByteString $ W4S.fromChar16Lit str
+              -- return $ string (Some W4.Char16Repr) $ T.decodeUtf16LE $ W4S.toLEByteString $ W4S.fromChar16Lit str
         go (W4.BoolExpr b _) = return $ bool b
         go (W4.AppExpr appExpr) = convertAppExpr' appExpr
         go (W4.NonceAppExpr nae) =
