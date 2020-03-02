@@ -214,7 +214,6 @@ parseAtom
   P.<|> P.try (uncurry AStr  <$> parseStr)
   P.<|> P.try (ABool <$> parseBool)
   P.<|> P.try (uncurry ABV <$> parseBV)
-  P.<|> P.unexpected "Invalid s-expression atom"
 
 parseSExpr :: T.Text -> Either String SExpr
 parseSExpr = SC.decodeOne $ SC.asWellFormed $ SC.withLispComments (SC.mkParser parseAtom)
