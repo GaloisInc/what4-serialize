@@ -70,3 +70,4 @@ test-suite what4-serialize-tests
                  , parameterized-utils
                  , async
                  , directory
+                 , ordered-containers
