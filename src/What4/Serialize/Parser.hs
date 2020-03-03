@@ -34,6 +34,8 @@ module What4.Serialize.Parser
   , printSExpr
   ) where
 
+-- CI test
+
 import qualified Control.Monad.Reader as R
 import qualified Control.Monad.Except as E
 import           Control.Monad.IO.Class ( liftIO )
