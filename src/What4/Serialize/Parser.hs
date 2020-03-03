@@ -62,30 +62,24 @@ import qualified What4.Interface as W4
 
 import           What4.Serialize.SETokens ( Atom(..), printSExpr, parseSExpr )
 import qualified What4.Utils.Util as U
+import           What4.Serialize.Printer ( SExpr )
 
 import           Prelude
 
-
-type SExpr = S.WellFormedSExpr Atom
-
 data SomeSymFn t = forall dom ret. SomeSymFn (W4.SymFn t dom ret)
-
 
 data Config sym =
   Config
-  { cSym :: sym
-  -- ^ The symbolic What4 backend being used.
-  , cSymFnLookup :: Text -> IO (Maybe (SomeSymFn sym))
+  { cSymFnLookup :: Text -> IO (Maybe (SomeSymFn sym))
   -- ^ The mapping of names to defined What4 SymFns.
   , cExprLookup :: Text -> IO (Maybe (Some (W4.SymExpr sym)))
   -- ^ The mapping of names to defined What4 expressions.
   }
 
-defaultConfig :: sym -> Config sym
-defaultConfig sym = Config { cSym = sym
-                           , cSymFnLookup = const (return Nothing)
-                           , cExprLookup = const (return Nothing)
-                           }
+defaultConfig :: (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym)) => sym -> Config sym
+defaultConfig _sym = Config { cSymFnLookup = const (return Nothing)
+                            , cExprLookup = const (return Nothing)
+                            }
 
 
 -- | The lexical environment for parsing s-expressions and
@@ -140,16 +134,17 @@ deserializeExpr ::
   => sym
   -> SExpr
   -> IO (Either String (Some (W4.SymExpr sym)))
-deserializeExpr sym = deserializeExprWithConfig cfg
+deserializeExpr sym = deserializeExprWithConfig sym cfg
   where cfg = defaultConfig sym
 
 deserializeExprWithConfig ::
   forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
-  => Config sym
+  => sym
+  -> Config sym
   -> SExpr
   -> IO (Either String (Some (W4.SymExpr sym)))
-deserializeExprWithConfig cfg sexpr = runProcessor env (readExpr sexpr)
-  where env = ProcessorEnv { procSym = cSym cfg
+deserializeExprWithConfig sym cfg sexpr = runProcessor env (readExpr sexpr)
+  where env = ProcessorEnv { procSym = sym
                            , procSymFnLookup = cSymFnLookup cfg
                            , procExprLookup = cExprLookup cfg
                            , procLetEnv = Map.empty
@@ -163,16 +158,17 @@ deserializeSymFn ::
   => sym
   -> SExpr
   -> IO (Either String (SomeSymFn sym))
-deserializeSymFn sym = deserializeSymFnWithConfig cfg
+deserializeSymFn sym = deserializeSymFnWithConfig sym cfg
   where cfg = defaultConfig sym
 
 deserializeSymFnWithConfig ::
   forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
-  => Config sym
+  => sym
+  -> Config sym
   -> SExpr
   -> IO (Either String (SomeSymFn sym))
-deserializeSymFnWithConfig cfg sexpr = runProcessor env (readSymFn sexpr)
-  where env = ProcessorEnv { procSym = cSym cfg
+deserializeSymFnWithConfig sym cfg sexpr = runProcessor env (readSymFn sexpr)
+  where env = ProcessorEnv { procSym = sym
                            , procSymFnLookup = cSymFnLookup cfg
                            , procExprLookup = cExprLookup cfg
                            , procLetEnv = Map.empty

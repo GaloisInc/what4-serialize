@@ -27,7 +27,7 @@ module What4.Serialize.Printer
   , defaultConfig
   , SExpr
   , Atom(..)
-  , SomeSymFn(..)
+  , SomeExprSymFn(..)
   , S.WellFormedSExpr(..)
   , ident, int, string
   , bitvec, bool, nat, real
@@ -76,21 +76,25 @@ import           What4.Serialize.SETokens ( Atom(..), printSExpr
 
 type SExpr = S.WellFormedSExpr Atom
 
-data SomeSymFn t = forall dom ret. SomeSymFn (W4.ExprSymFn t dom ret)
+data SomeExprSymFn t = forall dom ret. SomeExprSymFn (W4.ExprSymFn t dom ret)
 
-instance Eq (SomeSymFn t) where
-  (SomeSymFn fn1) == (SomeSymFn fn2) =
+instance Eq (SomeExprSymFn t) where
+  (SomeExprSymFn fn1) == (SomeExprSymFn fn2) =
     case W4.testEquality (W4.symFnId fn1) (W4.symFnId fn2) of
       Just _ -> True
       _ -> False
 
-instance Ord (SomeSymFn t) where
-  compare (SomeSymFn fn1) (SomeSymFn fn2) =
+instance Ord (SomeExprSymFn t) where
+  compare (SomeExprSymFn fn1) (SomeExprSymFn fn2) =
     compare (Nonce.indexValue $ W4.symFnId fn1) (Nonce.indexValue $ W4.symFnId fn2) 
 
 
+instance Show (SomeExprSymFn t) where
+  show (SomeExprSymFn f) = show f
+
+
 type VarNameEnv t = OMap (Some (W4.ExprBoundVar t)) Text
-type FnNameEnv t  = OMap (SomeSymFn t) Text
+type FnNameEnv t  = OMap (SomeExprSymFn t) Text
 
 ppFreeVarEnv :: VarNameEnv t -> String
 ppFreeVarEnv env = show $ map toStr entries
@@ -104,11 +108,11 @@ ppFreeVarEnv env = show $ map toStr entries
 ppFreeSymFnEnv :: FnNameEnv t -> String
 ppFreeSymFnEnv env = show $ map toStr entries
   where entries = OMap.toAscList env
-        toStr :: ((SomeSymFn t), Text) -> (String, String, String)
-        toStr ((SomeSymFn fn), newName) = ( T.unpack $ W4.solverSymbolAsText $ W4.symFnName fn
-                                          , show $ W4.symFnArgTypes fn
-                                          , T.unpack newName
-                                          )
+        toStr :: ((SomeExprSymFn t), Text) -> (String, String, String)
+        toStr ((SomeExprSymFn fn), newName) = ( T.unpack $ W4.solverSymbolAsText $ W4.symFnName fn
+                                              , show $ W4.symFnArgTypes fn
+                                              , T.unpack newName
+                                              )
 
 -- | Controls how expressions and functions are serialized.
 data Config =
@@ -257,7 +261,7 @@ runMemo cfg m = MS.runState m $ initEnv cfg
 letFn :: SExpr -> Memo t SExpr
 letFn sexpr = go [] [] Set.empty
   where
-    go :: [((SomeSymFn t), Text)] -> [(Text, SExpr)] -> Set Text ->  Memo t SExpr
+    go :: [((SomeExprSymFn t), Text)] -> [(Text, SExpr)] -> Set Text ->  Memo t SExpr
     go [] fnBindings seen = do
       -- Although the `todo` list is empty, we may have
       -- encountered some SymFns along the way, so check for
@@ -271,7 +275,7 @@ letFn sexpr = go [] [] Set.empty
              else let bs = map (\(name, def) -> S.L [ident name, def]) fnBindings
                   in return $ S.L [ident "letfn" , S.L bs, sexpr]
         else go newFns fnBindings seen
-    go (((SomeSymFn nextFn), nextFnName):todo) fnBindings seen = do
+    go (((SomeExprSymFn nextFn), nextFnName):todo) fnBindings seen = do
       nextSExpr <- convertSymFn nextFn
       let fnBindings' = (nextFnName, nextSExpr):fnBindings
           seen' = Set.insert nextFnName seen
@@ -713,12 +717,12 @@ convertFnApp ::
 convertFnApp fn args = do
   argSExprs <- convertExprAssignment args
   fnEnv <- MS.gets envFreeSymFnEnv
-  case OMap.lookup (SomeSymFn fn) fnEnv of
+  case OMap.lookup (SomeExprSymFn fn) fnEnv of
     Just fnName ->
       return $ S.L $ (ident "call"):(ident fnName):argSExprs
     Nothing -> do
       varName <- freshFnName fn
-      MS.modify' $ (\e -> e {envFreeSymFnEnv =  fnEnv OMap.|> ((SomeSymFn fn), varName)})
+      MS.modify' $ (\e -> e {envFreeSymFnEnv =  fnEnv OMap.|> ((SomeExprSymFn fn), varName)})
       return $ S.L $ (ident "call"):(ident varName):argSExprs
 
 
