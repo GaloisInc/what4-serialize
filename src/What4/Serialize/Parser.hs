@@ -264,20 +264,20 @@ getBVProof expr =
 -- | Operator type descriptions for parsing s-expression of
 -- the form @(operator operands ...)@.
 data Op sym where
-  -- | Generic unary operator description.
+    -- | Generic unary operator description.
     Op1 :: Ctx.Assignment BaseTypeRepr (Ctx.EmptyCtx Ctx.::> arg1)
         -> (sym ->
             W4.SymExpr sym arg1 ->
             IO (W4.SymExpr sym ret))
         -> Op sym
-  -- | Generic dyadic operator description.
+    -- | Generic dyadic operator description.
     Op2 :: Ctx.Assignment BaseTypeRepr (Ctx.EmptyCtx Ctx.::> arg1 Ctx.::> arg2)
         -> (sym ->
             W4.SymExpr sym arg1 ->
             W4.SymExpr sym arg2 ->
             IO (W4.SymExpr sym ret))
         -> Op sym
-  -- | Generic triadic operator description.
+    -- | Generic triadic operator description.
     Op3 :: Ctx.Assignment BaseTypeRepr (Ctx.EmptyCtx Ctx.::> arg1 Ctx.::> arg2 Ctx.::> arg3)
         -> (sym ->
             W4.SymExpr sym arg1 ->
