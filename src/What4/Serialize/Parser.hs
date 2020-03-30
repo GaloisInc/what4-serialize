@@ -501,7 +501,7 @@ readApp opRaw@(S.WFSAtom (AId operator)) operands = do
   prefixError ("in reading expression:\n"
                ++(T.unpack $ printSExpr mempty $ S.WFSList (opRaw:operands))++"\n") $
   -- Parse an expression of the form @(fnname operands ...)@
-    case lookupOp operator of
+    case lookupOp @sym operator of
       Just (Op1 arg_types fn) -> do
         args <- readExprs operands
         exprAssignment arg_types args >>= \case
