@@ -37,6 +37,7 @@ import qualified What4.Interface as WI -- ( getConfiguration )
 
 import qualified What4.Serialize.Printer as WOUT
 import qualified What4.Serialize.Parser as WIN
+import qualified What4.Serialize.FastSExpr as WSF
 
 
 import           Prelude
@@ -44,48 +45,52 @@ import           Prelude
 
 symFnTests :: [TestTree]
 symFnTests = [
-  testGroup "SymFns" $
-    testBasicArguments
-    <> testFunctionCalls
-    <> testExpressions
+  testGroup "SymFns" (mconcat [
+    testBasicArguments WIN.parseSExpr
+    , testFunctionCalls WIN.parseSExpr
+    , testExpressions WIN.parseSExpr
+    , testBasicArguments WSF.parseSExpr
+    , testFunctionCalls WSF.parseSExpr
+    , testExpressions WSF.parseSExpr
+    ])
   ]
 
 data BuilderData t = NoBuilderData
 
-testBasicArguments :: [TestTree]
-testBasicArguments =
+testBasicArguments :: (T.Text -> Either String WIN.SExpr) -> [TestTree]
+testBasicArguments parseSExpr =
     [ testProperty "same argument type" $
         withTests 1 $
-        property $ mkEquivalenceTest (Ctx.empty :> BaseIntegerRepr :> BaseIntegerRepr) $ \sym bvs -> do
+        property $ mkEquivalenceTest parseSExpr (Ctx.empty :> BaseIntegerRepr :> BaseIntegerRepr) $ \sym bvs -> do
           let i1 = bvs ! Ctx.i1of2
           let i2 = bvs ! Ctx.i2of2
           WI.intAdd sym i1 i2
     , testProperty "different argument types" $
          withTests 1 $
-         property $ mkEquivalenceTest (Ctx.empty :> BaseIntegerRepr :> BaseBoolRepr) $ \sym bvs -> do
+         property $ mkEquivalenceTest parseSExpr (Ctx.empty :> BaseIntegerRepr :> BaseBoolRepr) $ \sym bvs -> do
           let i1 = bvs ! Ctx.i1of2
           let b1 = bvs ! Ctx.i2of2
           WI.baseTypeIte sym b1 i1 i1
     ]
 
 
-testFunctionCalls :: [TestTree]
-testFunctionCalls =
+testFunctionCalls :: (T.Text -> Either String WIN.SExpr) -> [TestTree]
+testFunctionCalls parseSExpr =
     [ testProperty "no arguments" $
         withTests 1 $
-        property $ mkEquivalenceTest Ctx.empty $ \sym _ -> do
+        property $ mkEquivalenceTest parseSExpr Ctx.empty $ \sym _ -> do
           ufn <- WI.freshTotalUninterpFn sym (WI.safeSymbol "ufn") Ctx.empty BaseBoolRepr
           WI.applySymFn sym ufn Ctx.empty
     , testProperty "two inner arguments" $
         withTests 1 $
-        property $ mkEquivalenceTest Ctx.empty $ \sym _ -> do
+        property $ mkEquivalenceTest parseSExpr Ctx.empty $ \sym _ -> do
           i1 <- WI.intLit sym 0
           let b1 = WI.truePred sym
           ufn <- WI.freshTotalUninterpFn sym (WI.safeSymbol "ufn") (Ctx.empty :> BaseIntegerRepr :> BaseBoolRepr) BaseBoolRepr
           WI.applySymFn sym ufn (Ctx.empty :> i1 :> b1)
     , testProperty "argument passthrough" $
          withTests 1 $
-        property $ mkEquivalenceTest (Ctx.empty :> BaseBoolRepr :> BaseIntegerRepr) $ \sym bvs -> do
+        property $ mkEquivalenceTest parseSExpr (Ctx.empty :> BaseBoolRepr :> BaseIntegerRepr) $ \sym bvs -> do
           let i1 = bvs ! Ctx.i2of2
           let b1 = bvs ! Ctx.i1of2
           ufn <- WI.freshTotalUninterpFn sym (WI.safeSymbol "ufn") (Ctx.empty :> BaseIntegerRepr :> BaseBoolRepr) BaseBoolRepr
@@ -93,21 +98,21 @@ testFunctionCalls =
     ]
 
 
-testExpressions :: [TestTree]
-testExpressions =
+testExpressions :: (T.Text -> Either String WIN.SExpr) -> [TestTree]
+testExpressions parseSExpr =
     [ testProperty "negative ints" $
         withTests 1 $
-        property $ mkEquivalenceTest Ctx.empty $ \sym _ -> do
+        property $ mkEquivalenceTest parseSExpr Ctx.empty $ \sym _ -> do
           WI.intLit sym (-1)
     , testProperty "simple struct" $
         withTests 1 $
-        property $ mkEquivalenceTest Ctx.empty $ \sym _ -> do
+        property $ mkEquivalenceTest parseSExpr Ctx.empty $ \sym _ -> do
           i1 <- WI.intLit sym 0
           let b1 = WI.truePred sym
           WI.mkStruct sym (Ctx.empty :> i1 :> b1)
     , testProperty "struct field access" $
         withTests 1 $
-        property $ mkEquivalenceTest (Ctx.empty :> BaseStructRepr (Ctx.empty :> BaseIntegerRepr :> BaseBoolRepr)) $ \sym bvs -> do
+        property $ mkEquivalenceTest parseSExpr (Ctx.empty :> BaseStructRepr (Ctx.empty :> BaseIntegerRepr :> BaseBoolRepr)) $ \sym bvs -> do
           let struct = bvs ! Ctx.baseIndex
           i1 <- WI.structField sym struct Ctx.i1of2
           b1 <- WI.structField sym struct Ctx.i2of2
@@ -118,14 +123,14 @@ testExpressions =
     --      WI.constantArray sym (Ctx.empty :> BaseIntegerRepr) i1
     , testProperty "array update" $
         withTests 1 $
-        property $ mkEquivalenceTest (Ctx.empty :> BaseArrayRepr (Ctx.empty :> BaseIntegerRepr) BaseIntegerRepr) $ \sym bvs -> do
+        property $ mkEquivalenceTest parseSExpr (Ctx.empty :> BaseArrayRepr (Ctx.empty :> BaseIntegerRepr) BaseIntegerRepr) $ \sym bvs -> do
           i1 <- WI.intLit sym 1
           i2 <- WI.intLit sym 2
           let arr = bvs ! Ctx.baseIndex
           WI.arrayUpdate sym arr (Ctx.empty :> i1) i2
     , testProperty "integer to bitvector" $
         withTests 1 $
-        property $ mkEquivalenceTest (Ctx.empty :> BaseIntegerRepr) $ \sym bvs -> do
+        property $ mkEquivalenceTest parseSExpr (Ctx.empty :> BaseIntegerRepr) $ \sym bvs -> do
           let i1 = bvs ! Ctx.baseIndex
           WI.integerToBV sym i1 (WI.knownNat @32)
     ]
@@ -135,14 +140,15 @@ mkEquivalenceTest :: forall m args ret
                    . ( MonadTest m
                      , MonadIO m
                      )
-                  => Ctx.Assignment BaseTypeRepr args
+                  => (T.Text -> Either String WIN.SExpr)
+                  -> Ctx.Assignment BaseTypeRepr args
                   -> (forall sym
                        . WI.IsSymExprBuilder sym
                       => sym
                       -> Ctx.Assignment (WI.SymExpr sym) args
                       -> IO (WI.SymExpr sym ret))
                   -> m ()
-mkEquivalenceTest argTs getExpr = do
+mkEquivalenceTest parseSExpr argTs getExpr = do
   Some r <- liftIO $ newIONonceGenerator
   sym <- liftIO $ S.newExprBuilder S.FloatRealRepr NoBuilderData r
   liftIO $ S.startCaching sym
@@ -187,7 +193,7 @@ mkEquivalenceTest argTs getExpr = do
                       Nothing -> return Nothing
                       Just (Some x) -> return $ Just (Some x)
                 }
-        case WIN.parseSExpr fnText of
+        case parseSExpr fnText of
           Left errMsg -> return $ Left errMsg
           Right sexpr -> liftIO $ WIN.deserializeSymFnWithConfig sym dcfg sexpr
       case deser of
