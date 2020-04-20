@@ -119,9 +119,9 @@ parseStr = do
 parseAtom :: Parser WST.Atom
 parseAtom = TM.try (uncurry WST.ABV <$> parseBV)
         <|> TM.try (WST.ABool <$> parseBool)
+        <|> TM.try (WST.AInt <$> parseInt)
         <|> TM.try (WST.AId <$> parseId)
         <|> TM.try (WST.ANat <$> parseNat)
-        <|> TM.try (WST.AInt <$> parseInt)
         <|> TM.try (WST.AReal <$> parseReal)
         <|> TM.try (uncurry WST.AStr <$> parseStr)
 
