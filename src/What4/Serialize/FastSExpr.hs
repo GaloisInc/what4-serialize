@@ -1,5 +1,11 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
+-- | This module implements a specialized s-expression parser
+--
+-- The parser in s-cargot is very general, but that also makes it a bit
+-- inefficient.  This module implements a drop-in replacement parser for the one
+-- in What4.Serialize.Parser using megaparsec.  It is completely specialized to
+-- the types in this library.
 module What4.Serialize.FastSExpr (
   parseSExpr
   ) where
@@ -18,6 +24,7 @@ import qualified Text.Megaparsec.Char.Lexer as TMCL
 import qualified What4.BaseTypes as WT
 import qualified What4.Serialize.SETokens as WST
 
+-- | Parse 'T.Text' into the well-formed s-expression type from s-cargot.
 parseSExpr :: T.Text -> Either String (SC.WellFormedSExpr WST.Atom)
 parseSExpr t =
   case TM.runParser parse "<input>" t of
