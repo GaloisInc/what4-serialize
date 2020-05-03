@@ -15,6 +15,7 @@ Description:
 library
   build-depends:
     base >= 4.8 && < 5,
+    bv-sized,
     BoundedChan,
     containers >= 0.5.0.0,
     directory,

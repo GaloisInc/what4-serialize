@@ -48,6 +48,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import           Text.Printf ( printf )
 
+import qualified Data.BitVector.Sized as BV
 import qualified Data.Parameterized.Ctx as Ctx
 import qualified Data.Parameterized.Context as Ctx
 import           Data.Parameterized.Classes
@@ -810,7 +811,7 @@ readExpr (S.WFSAtom (ABV len val)) = do
   case someNat (toInteger len) of
     Just (Some lenRepr) ->
         let Just pf = isPosNat lenRepr
-        in liftIO $ withLeqProof pf (Some <$> W4.bvLit sym lenRepr val)
+        in liftIO $ withLeqProof pf (Some <$> W4.bvLit sym lenRepr (BV.mkBV lenRepr val))
     Nothing -> E.throwError "SemMC.Formula.Parser.readExpr someNat failure"
   -- Just (Some lenRepr) <- return $ someNat (toInteger len)
   -- let Just pf = isPosNat lenRepr

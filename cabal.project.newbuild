@@ -1,3 +1,4 @@
 packages: *.cabal
           deps/what4/what4/
-
+	  deps/bv-sized
+	  deps/parameterized-utils
