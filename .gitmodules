@@ -1,9 +1,6 @@
 [submodule "deps/what4"]
 	path = deps/what4
 	url = https://github.com/GaloisInc/what4
-[submodule "deps/bv-sized"]
-	path = deps/bv-sized
-	url = git@github.com:/GaloisInc/bv-sized.git
 [submodule "deps/parameterized-utils"]
 	path = deps/parameterized-utils
 	url = git@github.com:/GaloisInc/parameterized-utils
