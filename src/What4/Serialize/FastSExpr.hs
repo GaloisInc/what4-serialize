@@ -27,7 +27,7 @@ import qualified What4.Serialize.SETokens as WST
 -- | Parse 'T.Text' into the well-formed s-expression type from s-cargot.
 parseSExpr :: T.Text -> Either String (SC.WellFormedSExpr WST.Atom)
 parseSExpr t =
-  case TM.runParser parse "<input>" t of
+  case TM.runParser (ws >> parse) "<input>" t of
     Left errBundle -> Left (show errBundle)
     Right a -> Right a
 
