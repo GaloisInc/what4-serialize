@@ -38,8 +38,7 @@ import qualified Control.Monad.Reader as R
 import qualified Control.Monad.Except as E
 import           Control.Monad.IO.Class ( liftIO )
 import           Data.Kind
-import           Data.Map ( Map )
-import qualified Data.Map as Map
+import qualified Data.HashMap.Lazy as HM
 import qualified Data.SCargot.Repr.WellFormed as S
 
 import qualified Data.List as List
@@ -92,12 +91,12 @@ data ProcessorEnv sym =
     -- ^ The user-specified mapping of names to defined What4 SymFns.
   , procExprLookup :: Text -> IO (Maybe (Some (W4.SymExpr sym)))
   -- ^ The user-specified mapping of names to defined What4 expressions.
-  , procLetEnv :: Map Text (Some (W4.SymExpr sym))
+  , procLetEnv :: HM.HashMap Text (Some (W4.SymExpr sym))
   -- ^ The current lexical environment w.r.t. let-bindings
   -- encountered while parsing. N.B., these bindings are
   -- checked _before_ the "global" bindings implied by the
   -- user-specified lookup functions.
-  , procLetFnEnv :: Map Text (SomeSymFn sym)
+  , procLetFnEnv :: HM.HashMap Text (SomeSymFn sym)
   -- ^ The current lexical symfn environment
   -- w.r.t. letfn-bindings encountered while parsing. N.B.,
   -- these bindings are checked _before_ the "global"
@@ -114,7 +113,7 @@ lookupExpr :: Text -> Processor sym (Maybe (Some (W4.SymExpr sym)))
 lookupExpr nm = do
   userLookupFn <- R.asks procExprLookup
   letEnv <- R.asks procLetEnv
-  case Map.lookup nm letEnv of
+  case HM.lookup nm letEnv of
     Nothing -> liftIO $ userLookupFn nm
     res -> return res
 
@@ -122,7 +121,7 @@ lookupFn :: Text -> Processor sym (Maybe (SomeSymFn sym))
 lookupFn nm = do
   userLookupFn <- R.asks procSymFnLookup
   letEnv <- R.asks procLetFnEnv
-  case Map.lookup nm letEnv of
+  case HM.lookup nm letEnv of
     Nothing -> liftIO $ userLookupFn nm
     res -> return res
 
@@ -147,8 +146,8 @@ deserializeExprWithConfig sym cfg sexpr = runProcessor env (readExpr sexpr)
   where env = ProcessorEnv { procSym = sym
                            , procSymFnLookup = cSymFnLookup cfg
                            , procExprLookup = cExprLookup cfg
-                           , procLetEnv = Map.empty
-                           , procLetFnEnv = Map.empty
+                           , procLetEnv = HM.empty
+                           , procLetFnEnv = HM.empty
                            }
 
 -- | @(deserializeSymFn sym)@ is equivalent
@@ -171,8 +170,8 @@ deserializeSymFnWithConfig sym cfg sexpr = runProcessor env (readSymFn sexpr)
   where env = ProcessorEnv { procSym = sym
                            , procSymFnLookup = cSymFnLookup cfg
                            , procExprLookup = cExprLookup cfg
-                           , procLetEnv = Map.empty
-                           , procLetFnEnv = Map.empty
+                           , procLetEnv = HM.empty
+                           , procLetFnEnv = HM.empty
                            }
 
 
@@ -322,122 +321,126 @@ data Op sym where
 
 -- | Lookup mapping operators to their Op definitions (if they exist)
 lookupOp :: forall sym . W4.IsSymExprBuilder sym => Text -> Maybe (Op sym)
-lookupOp = \case
-  -- -- -- Boolean ops -- -- --
-  "andp" -> Just $ Op2 knownRepr $ W4.andPred
-  "orp" -> Just $ Op2 knownRepr $ W4.orPred
-  "xorp" -> Just $ Op2 knownRepr $ W4.xorPred
-  "notp" -> Just $ Op1 knownRepr $ W4.notPred
-  -- -- -- Natural ops -- -- --
-  "natmul" -> Just $ Op2 knownRepr $ W4.natMul
-  "natadd" -> Just $ Op2 knownRepr $ W4.natAdd
-  "natle"  -> Just $ Op2 knownRepr $ W4.natLe
-  -- -- -- Integer ops -- -- --
-  "intmul" -> Just $ Op2 knownRepr $ W4.intMul
-  "intadd" -> Just $ Op2 knownRepr $ W4.intAdd
-  "intmod" -> Just $ Op2 knownRepr $ W4.intMod
-  "intdiv" -> Just $ Op2 knownRepr $ W4.intDiv
-  "intle"  -> Just $ Op2 knownRepr $ W4.intLe
-  "intabs" -> Just $ Op1 knownRepr $ W4.intAbs
-  -- -- -- Bitvector ops -- -- --
-  "bvand" -> Just $ BVOp2 W4.bvAndBits
-  "bvor" -> Just $ BVOp2 W4.bvOrBits
-  "bvadd" -> Just $ BVOp2 W4.bvAdd
-  "bvmul" -> Just $ BVOp2 W4.bvMul
-  "bvudiv" -> Just $ BVOp2 W4.bvUdiv
-  "bvurem" -> Just $ BVOp2 W4.bvUrem
-  "bvshl" -> Just $ BVOp2 W4.bvShl
-  "bvlshr" -> Just $ BVOp2 W4.bvLshr
-  "bvnand" -> Just $ BVOp2 $ \sym arg1 arg2 -> W4.bvNotBits sym =<< W4.bvAndBits sym arg1 arg2
-  "bvnor" -> Just $ BVOp2 $ \sym arg1 arg2 -> W4.bvNotBits sym =<< W4.bvOrBits sym arg1 arg2
-  "bvxor" -> Just $ BVOp2 W4.bvXorBits
-  "bvxnor" -> Just $ BVOp2 $ \sym arg1 arg2 -> W4.bvNotBits sym =<< W4.bvXorBits sym arg1 arg2
-  "bvsub" -> Just $ BVOp2 W4.bvSub
-  "bvsdiv" -> Just $ BVOp2 W4.bvSdiv
-  "bvsrem" -> Just $ BVOp2 W4.bvSrem
-  "bvsmod" -> error "bvsmod is not implemented"
-  "bvashr" -> Just $ BVOp2 W4.bvAshr
-  "bvult" -> Just $ BVComp2 W4.bvUlt
-  "bvule" -> Just $ BVComp2 W4.bvUle
-  "bvugt" -> Just $ BVComp2 W4.bvUgt
-  "bvuge" -> Just $ BVComp2 W4.bvUge
-  "bvslt" -> Just $ BVComp2 W4.bvSlt
-  "bvsle" -> Just $ BVComp2 W4.bvSle
-  "bvsgt" -> Just $ BVComp2 W4.bvSgt
-  "bvsge" -> Just $ BVComp2 W4.bvSge
-  "bveq" -> Just $ BVComp2 W4.bvEq
-  "bvne" -> Just $ BVComp2 W4.bvNe
-  "bvneg" -> Just $ BVOp1 W4.bvNeg
-  "bvnot" -> Just $ BVOp1 W4.bvNotBits
-  -- -- -- Floating point ops -- -- --
-  "fnegd" -> Just $ Op1 knownRepr $ W4.floatNeg @_ @Prec64
-  "fnegs" -> Just $ Op1 knownRepr $ W4.floatNeg @_ @Prec32
-  "fabsd" -> Just $ Op1 knownRepr $ W4.floatAbs @_ @Prec64
-  "fabss" -> Just $ Op1 knownRepr $ W4.floatAbs @_ @Prec32
-  "fsqrt" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.floatSqrt @_ @Prec64 sym rm x
-  "fsqrts" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.floatSqrt @_ @Prec32 sym rm x
-  "fnand" -> Just $ Op1 knownRepr $ W4.floatIsNaN @_ @Prec64
-  "fnans" -> Just $ Op1 knownRepr $ W4.floatIsNaN @_ @Prec32
-  "frsp" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.floatCast @_ @Prec32 @Prec64 sym knownRepr rm x
-  "fp_single_to_double" -> Just $ Op1 knownRepr $ \sym ->
-    W4.floatCast @_ @Prec64 @Prec32 sym knownRepr W4.RNE
-  "fp_binary_to_double" ->
-    Just $ Op1 knownRepr $ \sym -> W4.floatFromBinary @_ @11 @53 sym knownRepr
-  "fp_binary_to_single" ->
-    Just $ Op1 knownRepr $ \sym -> W4.floatFromBinary @_ @8 @24 sym knownRepr
-  "fp_double_to_binary" -> Just $ Op1 knownRepr $ W4.floatToBinary @_ @11 @53
-  "fp_single_to_binary" -> Just $ Op1 knownRepr $ W4.floatToBinary @_ @8 @24
-  "fctid" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.floatToSBV @_ @64 @Prec64 sym knownRepr rm x
-  "fctidu" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.floatToBV @_ @64 @Prec64 sym knownRepr rm x
-  "fctiw" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.floatToSBV @_ @32 @Prec64 sym knownRepr rm x
-  "fctiwu" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.floatToBV @_ @32 @Prec64 sym knownRepr rm x
-  "fcfid" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.sbvToFloat @_ @64 @Prec64 sym knownRepr rm x
-  "fcfids" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.sbvToFloat @_ @64 @Prec32 sym knownRepr rm x
-  "fcfidu" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.bvToFloat @_ @64 @Prec64 sym knownRepr rm x
-  "fcfidus" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.bvToFloat @_ @64 @Prec32 sym knownRepr rm x
-  "frti" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.floatRound @_ @Prec64 sym rm x
-  "frtis" -> Just $ Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
-    W4.floatRound @_ @Prec32 sym rm x
-  "fadd" -> Just $ Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
-    W4.floatAdd @_ @Prec64 sym rm x y
-  "fadds" -> Just $ Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
-    W4.floatAdd @_ @Prec32 sym rm x y
-  "fsub" -> Just $ Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
-    W4.floatSub @_ @Prec64 sym rm x y
-  "fsubs" -> Just $ Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
-    W4.floatSub @_ @Prec32 sym rm x y
-  "fmul" -> Just $ Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
-    W4.floatMul @_ @Prec64 sym rm x y
-  "fmuls" -> Just $ Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
-    W4.floatMul @_ @Prec32 sym rm x y
-  "fdiv" -> Just $ Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
-    W4.floatDiv @_ @Prec64 sym rm x y
-  "fdivs" -> Just $ Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
-    W4.floatDiv @_ @Prec32 sym rm x y
-  "fltd" -> Just $ Op2 knownRepr $ W4.floatLt @_ @Prec64
-  "flts" -> Just $ Op2 knownRepr $ W4.floatLt @_ @Prec32
-  "feqd" -> Just $ Op2 knownRepr $ W4.floatFpEq @_ @Prec64
-  "feqs" -> Just $ Op2 knownRepr $ W4.floatFpEq @_ @Prec32
-  "fled" -> Just $ Op2 knownRepr $ W4.floatLe @_ @Prec64
-  "fles" -> Just $ Op2 knownRepr $ W4.floatLe @_ @Prec32
-  "ffma" -> Just $ Op4 knownRepr $ \sym r x y z -> U.withRounding sym r $ \rm ->
-    W4.floatFMA @_ @Prec64 sym rm x y z
-  "ffmas" -> Just $ Op4 knownRepr $ \sym r x y z ->
-    U.withRounding sym r $ \rm -> W4.floatFMA @_ @Prec32 sym rm x y z
-  _ -> Nothing
+lookupOp name = HM.lookup name opTable
 
+
+opTable :: (W4.IsSymExprBuilder sym) => HM.HashMap Text (Op sym)
+opTable =
+  HM.fromList [
+  -- -- -- Boolean ops -- -- --
+    ("andp", Op2 knownRepr $ W4.andPred)
+  , ("orp", Op2 knownRepr $ W4.orPred)
+  , ("xorp", Op2 knownRepr $ W4.xorPred)
+  , ("notp", Op1 knownRepr $ W4.notPred)
+  -- -- -- Natural ops -- -- --
+  , ("natmul", Op2 knownRepr $ W4.natMul)
+  , ("natadd", Op2 knownRepr $ W4.natAdd)
+  , ("natle", Op2 knownRepr $ W4.natLe)
+  -- -- -- Integer ops -- -- --
+  , ("intmul", Op2 knownRepr $ W4.intMul)
+  , ("intadd", Op2 knownRepr $ W4.intAdd)
+  , ("intmod", Op2 knownRepr $ W4.intMod)
+  , ("intdiv", Op2 knownRepr $ W4.intDiv)
+  , ("intle", Op2 knownRepr $ W4.intLe)
+  , ("intabs", Op1 knownRepr $ W4.intAbs)
+  -- -- -- Bitvector ops -- -- --
+  , ("bvand", BVOp2 W4.bvAndBits)
+  , ("bvor", BVOp2 W4.bvOrBits)
+  , ("bvadd", BVOp2 W4.bvAdd)
+  , ("bvmul", BVOp2 W4.bvMul)
+  , ("bvudiv", BVOp2 W4.bvUdiv)
+  , ("bvurem", BVOp2 W4.bvUrem)
+  , ("bvshl", BVOp2 W4.bvShl)
+  , ("bvlshr", BVOp2 W4.bvLshr)
+  , ("bvnand", BVOp2 $ \sym arg1 arg2 -> W4.bvNotBits sym =<< W4.bvAndBits sym arg1 arg2)
+  , ("bvnor", BVOp2 $ \sym arg1 arg2 -> W4.bvNotBits sym =<< W4.bvOrBits sym arg1 arg2)
+  , ("bvxor", BVOp2 W4.bvXorBits)
+  , ("bvxnor", BVOp2 $ \sym arg1 arg2 -> W4.bvNotBits sym =<< W4.bvXorBits sym arg1 arg2)
+  , ("bvsub", BVOp2 W4.bvSub)
+  , ("bvsdiv", BVOp2 W4.bvSdiv)
+  , ("bvsrem", BVOp2 W4.bvSrem)
+  , ("bvsmod", error "bvsmod is not implemented")
+  , ("bvashr", BVOp2 W4.bvAshr)
+  , ("bvult", BVComp2 W4.bvUlt)
+  , ("bvule", BVComp2 W4.bvUle)
+  , ("bvugt", BVComp2 W4.bvUgt)
+  , ("bvuge", BVComp2 W4.bvUge)
+  , ("bvslt", BVComp2 W4.bvSlt)
+  , ("bvsle", BVComp2 W4.bvSle)
+  , ("bvsgt", BVComp2 W4.bvSgt)
+  , ("bvsge", BVComp2 W4.bvSge)
+  , ("bveq", BVComp2 W4.bvEq)
+  , ("bvne", BVComp2 W4.bvNe)
+  , ("bvneg", BVOp1 W4.bvNeg)
+  , ("bvnot", BVOp1 W4.bvNotBits)
+  -- -- -- Floating point ops -- -- --
+  , ("fnegd", Op1 knownRepr $ W4.floatNeg @_ @Prec64)
+  , ("fnegs", Op1 knownRepr $ W4.floatNeg @_ @Prec32)
+  , ("fabsd", Op1 knownRepr $ W4.floatAbs @_ @Prec64)
+  , ("fabss", Op1 knownRepr $ W4.floatAbs @_ @Prec32)
+  , ("fsqrt", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.floatSqrt @_ @Prec64 sym rm x)
+  , ("fsqrts", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.floatSqrt @_ @Prec32 sym rm x)
+  , ("fnand", Op1 knownRepr $ W4.floatIsNaN @_ @Prec64)
+  , ("fnans", Op1 knownRepr $ W4.floatIsNaN @_ @Prec32)
+  , ("frsp", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.floatCast @_ @Prec32 @Prec64 sym knownRepr rm x)
+  , ("fp_single_to_double", Op1 knownRepr $ \sym ->
+    W4.floatCast @_ @Prec64 @Prec32 sym knownRepr W4.RNE)
+  , ("fp_binary_to_double",
+     Op1 knownRepr $ \sym -> W4.floatFromBinary @_ @11 @53 sym knownRepr)
+  , ("fp_binary_to_single",
+     Op1 knownRepr $ \sym -> W4.floatFromBinary @_ @8 @24 sym knownRepr)
+  , ("fp_double_to_binary", Op1 knownRepr $ W4.floatToBinary @_ @11 @53)
+  , ("fp_single_to_binary", Op1 knownRepr $ W4.floatToBinary @_ @8 @24)
+  , ("fctid", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.floatToSBV @_ @64 @Prec64 sym knownRepr rm x)
+  , ("fctidu", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.floatToBV @_ @64 @Prec64 sym knownRepr rm x)
+  , ("fctiw", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.floatToSBV @_ @32 @Prec64 sym knownRepr rm x)
+  , ("fctiwu", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.floatToBV @_ @32 @Prec64 sym knownRepr rm x)
+  , ("fcfid", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.sbvToFloat @_ @64 @Prec64 sym knownRepr rm x)
+  , ("fcfids", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.sbvToFloat @_ @64 @Prec32 sym knownRepr rm x)
+  , ("fcfidu", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.bvToFloat @_ @64 @Prec64 sym knownRepr rm x)
+  , ("fcfidus", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.bvToFloat @_ @64 @Prec32 sym knownRepr rm x)
+  , ("frti", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.floatRound @_ @Prec64 sym rm x)
+  , ("frtis", Op2 knownRepr $ \sym r x -> U.withRounding sym r $ \rm ->
+    W4.floatRound @_ @Prec32 sym rm x)
+  , ("fadd", Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
+    W4.floatAdd @_ @Prec64 sym rm x y)
+  , ("fadds", Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
+    W4.floatAdd @_ @Prec32 sym rm x y)
+  , ("fsub", Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
+    W4.floatSub @_ @Prec64 sym rm x y)
+  , ("fsubs", Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
+    W4.floatSub @_ @Prec32 sym rm x y)
+  , ("fmul", Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
+    W4.floatMul @_ @Prec64 sym rm x y)
+  , ("fmuls", Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
+    W4.floatMul @_ @Prec32 sym rm x y)
+  , ("fdiv", Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
+    W4.floatDiv @_ @Prec64 sym rm x y)
+  , ("fdivs", Op3 knownRepr $ \sym r x y -> U.withRounding sym r $ \rm ->
+    W4.floatDiv @_ @Prec32 sym rm x y)
+  , ("fltd", Op2 knownRepr $ W4.floatLt @_ @Prec64)
+  , ("flts", Op2 knownRepr $ W4.floatLt @_ @Prec32)
+  , ("feqd", Op2 knownRepr $ W4.floatFpEq @_ @Prec64)
+  , ("feqs", Op2 knownRepr $ W4.floatFpEq @_ @Prec32)
+  , ("fled", Op2 knownRepr $ W4.floatLe @_ @Prec64)
+  , ("fles", Op2 knownRepr $ W4.floatLe @_ @Prec32)
+  , ("ffma", Op4 knownRepr $ \sym r x y z -> U.withRounding sym r $ \rm ->
+    W4.floatFMA @_ @Prec64 sym rm x y z)
+  , ("ffmas", Op4 knownRepr $ \sym r x y z ->
+    U.withRounding sym r $ \rm -> W4.floatFMA @_ @Prec32 sym rm x y z)
+  ]
 
 -- | Verify a list of arguments has a single argument and
 -- return it, else raise an error.
@@ -755,7 +758,7 @@ readLetExpr ::
 readLetExpr [] body = readExpr body
 readLetExpr ((S.WFSList [S.WFSAtom (AId x), e]):rst) body = do
   v <- readExpr e
-  R.local (\c -> c {procLetEnv = (Map.insert x v) $ procLetEnv c}) $
+  R.local (\c -> c {procLetEnv = (HM.insert x v) $ procLetEnv c}) $
     readLetExpr rst body
 readLetExpr bindings _body = E.throwError $
   "invalid s-expression for let-bindings: " ++ (show bindings)
@@ -771,7 +774,7 @@ readLetFnExpr ::
 readLetFnExpr [] body = readExpr body
 readLetFnExpr ((S.WFSList [S.WFSAtom (AId f), e]):rst) body = do
   v <- readSymFn e
-  R.local (\c -> c {procLetFnEnv = (Map.insert f v) $ procLetFnEnv c}) $
+  R.local (\c -> c {procLetFnEnv = (HM.insert f v) $ procLetFnEnv c}) $
     readLetExpr rst body
 readLetFnExpr bindings _body = E.throwError $
   "invalid s-expression for let-bindings: " ++ (show bindings)
@@ -917,11 +920,11 @@ readSymFn (S.WFSList [ S.WFSAtom (AId "definedfn")
                        Left _ -> E.throwError $ "Bad arg name : " ++ (T.unpack name)
                        Right solverSym -> liftIO $ Some <$> W4.freshBoundVar sym solverSym ty)
              $ zip argNames argTys
-  (Some body) <- let newBindings = Map.fromList
+  (Some body) <- let newBindings = HM.fromList
                                    $ zip argNames
                                    $ map (someVarExpr sym) argVars
                  in R.local
-                    (\env -> env {procLetEnv = Map.union (procLetEnv env) newBindings})
+                    (\env -> env {procLetEnv = HM.union (procLetEnv env) newBindings})
                     $ readExpr bodyRaw
   Some argVarAssignment <- return $ Ctx.fromList argVars
   let expand args = allFC W4.baseIsConcrete args
