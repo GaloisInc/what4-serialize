@@ -43,6 +43,7 @@ import           Data.Set ( Set )
 import qualified Data.Set as Set
 import           Data.Map.Ordered (OMap)
 import qualified Data.Map.Ordered as OMap
+import qualified Data.BitVector.Sized as BV
 import           Data.Parameterized.Some
 import qualified Data.Parameterized.Context as Ctx
 import qualified Data.Parameterized.NatRepr as NR
@@ -417,7 +418,7 @@ convertExpr initialExpr = do
         go (W4.SemiRingLiteral W4.SemiRingNatRepr val _) = return $ nat val
         go (W4.SemiRingLiteral W4.SemiRingIntegerRepr val _) = return $ int val -- do we need/want these?
         go (W4.SemiRingLiteral W4.SemiRingRealRepr val _) = return $ real val
-        go (W4.SemiRingLiteral (W4.SemiRingBVRepr _ sz) val _) = return $ bitvec (fromInteger (toInteger (widthVal sz))) val
+        go (W4.SemiRingLiteral (W4.SemiRingBVRepr _ sz) val _) = return $ bitvec (natValue sz) (BV.asUnsigned val)
         go (W4.StringExpr str _) =
           case (W4.stringLiteralInfo str) of
             W4.UnicodeRepr -> return $ string (Some W4.UnicodeRepr) (W4S.fromUnicodeLit str)
@@ -510,15 +511,15 @@ convertAppExpr' = go . W4.appExprApp
             W4.SemiRingBVRepr W4.BVArithRepr w ->
               let smul mul e = do
                     s <- goE e
-                    return $ S.L [ ident "bvmul", bitvec (natValue w) mul, s]
-                  sval v = return $ bitvec (natValue w) v
+                    return $ S.L [ ident "bvmul", bitvec (natValue w) (BV.asUnsigned mul), s]
+                  sval v = return $ bitvec (natValue w) (BV.asUnsigned v)
                   add x y = return $ S.L [ ident "bvadd", x, y ]
               in WSum.evalM add smul sval sm
             W4.SemiRingBVRepr W4.BVBitsRepr w ->
               let smul mul e = do
                     s <- goE e
-                    return $ S.L [ ident "bvand", bitvec (natValue w) mul, s]
-                  sval v = return $ bitvec (natValue w) v
+                    return $ S.L [ ident "bvand", bitvec (natValue w) (BV.asUnsigned mul), s]
+                  sval v = return $ bitvec (natValue w) (BV.asUnsigned v)
                   add x y = let op = ident "bvxor" in return $ S.L [ op, x, y ]
               in WSum.evalM add smul sval sm
             W4.SemiRingNatRepr ->

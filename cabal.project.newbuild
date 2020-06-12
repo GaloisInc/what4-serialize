@@ -1,3 +1,2 @@
 packages: *.cabal
           deps/what4/what4/
-

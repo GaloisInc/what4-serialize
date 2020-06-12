@@ -26,6 +26,7 @@ import qualified Control.Exception as E
 import           Data.Kind
 import           Text.Printf ( printf )
 import           Data.Maybe ( fromMaybe )
+import qualified Data.BitVector.Sized as BV
 import           What4.BaseTypes
 import           What4.Utils.Log
 import qualified What4.Interface as S
@@ -120,7 +121,7 @@ withRounding sym r action = do
  where
   roundingCond :: S.RoundingMode -> IO (S.Pred sym)
   roundingCond rm =
-    S.bvEq sym r =<< S.bvLit sym knownNat (roundingModeToBits rm)
+    S.bvEq sym r =<< S.bvLit sym knownNat (BV.mkBV knownNat (roundingModeToBits rm))
 
 roundingModeToBits :: S.RoundingMode -> Integer
 roundingModeToBits = \case
