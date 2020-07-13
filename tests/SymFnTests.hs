@@ -169,7 +169,7 @@ mkEquivalenceTest parseSExpr argTs getExpr = do
        -> WI.SymExpr sym ret
        -> m ()
     go sym bvs expr = do
-      fn1 <- liftIO $ WI.definedFn sym (WI.safeSymbol "fn") bvs expr (const False)
+      fn1 <- liftIO $ WI.definedFn sym (WI.safeSymbol "fn") bvs expr WI.NeverUnfold
       let scfg = WOUT.Config { WOUT.cfgAllowFreeVars = True
                              , WOUT.cfgAllowFreeSymFns = True
                              }
@@ -202,6 +202,6 @@ mkEquivalenceTest parseSExpr argTs getExpr = do
           debugOut $ (T.unpack fnText) ++ "\n"
           failure
         Right (WIN.SomeSymFn fn2) -> do
-          fn1out <- liftIO $ WI.definedFn sym (WI.safeSymbol "fn") bvs expr (const False)
+          fn1out <- liftIO $ WI.definedFn sym (WI.safeSymbol "fn") bvs expr WI.NeverUnfold
           symFnEqualityTest sym fn1out fn2
 
