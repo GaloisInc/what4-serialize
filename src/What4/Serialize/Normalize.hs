@@ -35,7 +35,11 @@ import qualified What4.Expr.WeightedSum as WSum
 import           Data.Parameterized.Classes
 
 
-normSymFn :: forall sym st fs t args ret. sym ~ B.ExprBuilder t st fs => sym -> B.ExprSymFn t args ret -> Ctx.Assignment (S.Expr t) args -> IO (S.Expr t ret)
+normSymFn :: forall sym st fs t args ret. sym ~ B.ExprBuilder t st fs
+          => sym
+          -> B.ExprSymFn t (B.Expr t) args ret
+          -> Ctx.Assignment (S.Expr t) args
+          -> IO (S.Expr t ret)
 normSymFn sym symFn argEs = case B.symFnInfo symFn of
   B.DefinedFnInfo argBVs expr _ -> do
     argEs' <- FC.traverseFC (normExpr sym) argEs

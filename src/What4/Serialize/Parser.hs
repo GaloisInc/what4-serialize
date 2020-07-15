@@ -53,7 +53,6 @@ import qualified Data.Parameterized.Context as Ctx
 import           Data.Parameterized.Classes
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.TraversableFC as FC
-import           Data.Parameterized.TraversableFC ( allFC )
 import           What4.BaseTypes
 
 import qualified What4.Expr.Builder as W4
@@ -928,8 +927,7 @@ readSymFn (S.WFSList [ S.WFSAtom (AId "definedfn")
                     (\env -> env {procLetEnv = HM.union (procLetEnv env) newBindings})
                     $ readExpr bodyRaw
   Some argVarAssignment <- return $ Ctx.fromList argVars
-  let expand args = allFC W4.baseIsConcrete args
-  symFn <- liftIO $ W4.definedFn sym symFnName argVarAssignment body expand
+  symFn <- liftIO $ W4.definedFn sym symFnName argVarAssignment body W4.UnfoldConcrete
   return $ SomeSymFn symFn
 readSymFn badSExp@(S.WFSList ((S.WFSAtom (AId "definedfn")):_)) =
   E.throwError $ ("invalid `definedfn`: " ++ (T.unpack $ printSExpr mempty badSExp))

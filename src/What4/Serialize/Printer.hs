@@ -77,7 +77,7 @@ import           What4.Serialize.SETokens ( Atom(..), printSExpr
 
 type SExpr = S.WellFormedSExpr Atom
 
-data SomeExprSymFn t = forall dom ret. SomeExprSymFn (W4.ExprSymFn t dom ret)
+data SomeExprSymFn t = forall dom ret. SomeExprSymFn (W4.ExprSymFn t (W4.Expr t) dom ret)
 
 instance Eq (SomeExprSymFn t) where
   (SomeExprSymFn fn1) == (SomeExprSymFn fn2) =
@@ -178,7 +178,7 @@ serializeExprWithConfig cfg expr = serializeSomething cfg (convertExprWithLet ex
 -- top-level let-binding around the emitted expression
 -- (unless there are no terms with non-atomic terms which
 -- can be shared).
-serializeSymFn :: W4.ExprSymFn t dom ret -> SExpr
+serializeSymFn :: W4.ExprSymFn t (W4.Expr t) dom ret -> SExpr
 serializeSymFn = resSExpr . (serializeSymFnWithConfig defaultConfig)
 
 
@@ -188,7 +188,7 @@ serializeSymFn = resSExpr . (serializeSymFnWithConfig defaultConfig)
 -- achieved via a top-level let-binding around the emitted
 -- expression (unless there are no terms with non-atomic
 -- terms which can be shared).
-serializeSymFnWithConfig :: Config -> W4.ExprSymFn t dom ret -> Result t
+serializeSymFnWithConfig :: Config -> W4.ExprSymFn t (W4.Expr t) dom ret -> Result t
 serializeSymFnWithConfig cfg fn = serializeSomething cfg (convertSymFn fn)
 
 -- | Run the given Memo computation to produce a well-formed
@@ -305,7 +305,7 @@ mkLet bindings body = S.L [ident "let", S.L bindings, body]
 -- | Converts a What4 ExprSymFn into an s-expression within
 -- the Memo monad (i.e., no `let` or `letfn`s are emitted).
 convertSymFn :: forall t args ret
-              . W4.ExprSymFn t args ret
+              . W4.ExprSymFn t (W4.Expr t) args ret
              -> Memo t SExpr
 convertSymFn symFn@(W4.ExprSymFn _ symFnName symFnInfo _) = do
  case symFnInfo of
@@ -371,7 +371,7 @@ freshName tp = do
                  W4.BaseArrayRepr{} -> "arr"
   return $ T.pack $ prefix++(show $ idCount)
 
-freshFnName :: W4.ExprSymFn t args ret -> Memo t Text
+freshFnName :: W4.ExprSymFn t e args ret -> Memo t Text
 freshFnName fn = do
   idCount <- MS.gets envIdCounter
   MS.modify' $ (\e -> e {envIdCounter = idCount + 1})
@@ -712,7 +712,7 @@ convertExprAssignment es =
   mapM (\(Some e) -> convertExpr e) (FC.toListFC Some es)
 
 convertFnApp ::
-  W4.ExprSymFn t args ret
+  W4.ExprSymFn t (W4.Expr t) args ret
   -> Ctx.Assignment (W4.Expr t) args
   -> Memo t SExpr
 convertFnApp fn args = do
