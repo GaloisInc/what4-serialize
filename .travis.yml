@@ -24,7 +24,7 @@ install:
   - git submodule update --init
   - ln -s cabal.project.newbuild cabal.project
   - cabal v2-configure
-  - cabal v2-build what4-serialize
+  - cabal v2-build
 
 addons:
   apt:
@@ -34,4 +34,4 @@ addons:
       - yices2
 
 script:
-  - cabal v2-run what4-serialize-tests
+  - cabal v2-test
