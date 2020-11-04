@@ -611,6 +611,11 @@ convertAppExpr' = go . W4.appExprApp
           return $ S.L [ident "bvashr", s1, s2]
         go (W4.BVZext r e) = extend "zero" (intValue r) e
         go (W4.BVSext r e) = extend "sign" (intValue r) e
+        go (W4.BVFill r e) = do
+          s <- goE e
+          return $ S.L [ S.L [ident "_", ident "bvfill", int (intValue r)]
+                       , s
+                       ]
 
         go (W4.BVToInteger e) = do
           s <- goE e

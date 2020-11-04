@@ -700,6 +700,16 @@ readApp (S.WFSList [S.WFSAtom (AId "_"), S.WFSAtom (AId extend), S.WFSAtom (AInt
       liftIO $ withLeqProof (leqAdd2 (leqRefl lenNat) iPositive) $
         let op = if extend == "zero_extend" then W4.bvZext else W4.bvSext
         in Some <$> op sym newLen arg
+readApp (S.WFSList [S.WFSAtom (AId "_"), S.WFSAtom (AId "bvfill"), S.WFSAtom (AInt width)]) args =
+  prefixError "in reading bvfill expression" $ do
+    sym <- R.reader procSym
+    Some arg <- readOneArg args
+    case W4.exprType arg of
+      BaseBoolRepr -> do
+        Some widthRep <- intToNatM width
+        LeqProof <- fromMaybeError "must extend by a positive length" $ isPosNat widthRep
+        liftIO (Some <$> W4.bvFill sym widthRep arg)
+      tyrep -> E.throwError ("Invalid argument type to bvFill: " ++ show tyrep)
 readApp rator rands = E.throwError $ ("readApp could not parse the following: "
                                       ++ (T.unpack (printSExpr mempty $ S.WFSList (rator:rands))))
 
