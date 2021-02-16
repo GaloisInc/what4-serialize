@@ -34,7 +34,7 @@ debugOut msg = liftIO $ do appendFile debugFile (msg <> "\n")
 alwaysPrint = liftIO . putStrLn
 
 
-showSymFn :: S.ExprSymFn t (S.Expr t) args ret -> String
+showSymFn :: S.ExprSymFn t args ret -> String
 showSymFn fn = case S.symFnInfo fn of
   S.DefinedFnInfo _ expr _ -> (show $ WI.printSymExpr expr)
   _ -> ""

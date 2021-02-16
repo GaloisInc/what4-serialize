@@ -1,14 +1,17 @@
 -- | Definition of the S-Expression tokens used to
 -- (de)serialize What4 expressions.
 
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module What4.Serialize.SETokens
     ( Atom(..)
-    , string, ident, int, bitvec, bool, nat, real
+    , string, ident, int, nat, bitvec, bool, real, float
     , string', ident'
     , printAtom
     , printSExpr
@@ -17,6 +20,7 @@ module What4.Serialize.SETokens
     where
 
 import qualified Data.Foldable as F
+import qualified Data.Parameterized.NatRepr as PN
 import qualified Data.SCargot as SC
 import qualified Data.SCargot.Comments as SC
 import qualified Data.SCargot.Repr as SC
@@ -25,6 +29,7 @@ import           Data.Semigroup
 import qualified Data.Sequence as Seq
 import           Data.Text (Text)
 import qualified Data.Text as T
+import qualified LibBF as BF
 import           Numeric.Natural ( Natural )
 import qualified Text.Parsec as P
 import           Text.Parsec.Text ( Parser )
@@ -45,9 +50,11 @@ data Atom =
   | AInt Integer
   -- ^ Integer (i.e., unbounded) literal.
   | ANat Natural
-  -- ^ Natural (i.e., unbounded) literal.
+  -- ^ Natural (i.e., unbounded) literal
   | AReal Rational
   -- ^ Real (i.e., unbounded) literal.
+  | AFloat (Some W4.FloatPrecisionRepr) BF.BigFloat
+  -- ^ A floating point literal (with precision)
   | ABV Int Integer
   -- ^ Bitvector, width and then value.
   | ABool Bool
@@ -78,14 +85,17 @@ ident' = SC.A . AId . T.pack
 int :: Integer -> SExpr
 int = SC.A . AInt
 
--- | Lift an integer.
+-- | Lift a natural
 nat :: Natural -> SExpr
 nat = SC.A . ANat
 
--- | Lift an integer.
+-- | Lift a real
 real :: Rational -> SExpr
 real = SC.A . AReal
 
+-- | Lift a float
+float :: W4.FloatPrecisionRepr fpp -> BF.BigFloat -> SExpr
+float rep bf = SC.A (AFloat (Some rep) bf)
 
 -- | Lift a bitvector.
 bitvec :: Natural -> Integer -> SExpr
@@ -126,7 +136,12 @@ printAtom a =
     AReal r -> T.pack $ "#r"++(show (numerator r))++"/"++(show (denominator r))
     ABV w val -> formatBV w val
     ABool b -> if b then "#true" else "#false"
+    AFloat (Some rep) bf -> formatFloat rep bf
 
+-- | Format a floating point value with no rounding in base 16
+formatFloat :: W4.FloatPrecisionRepr fpp -> BF.BigFloat -> T.Text
+formatFloat (W4.FloatingPointPrecisionRepr eb sb) bf =
+  T.pack (printf "#f#%s#%s#%s" (show eb) (show sb) (BF.bfToString 16 (BF.showFree Nothing) bf))
 
 formatBV :: Int -> Integer -> T.Text
 formatBV w val = T.pack (prefix ++ printf fmt val)
@@ -205,9 +220,39 @@ parseBV = P.char '#' >> ((P.char 'b' >> parseBin) P.<|> (P.char 'x' >> parseHex)
 
         parseHex = (\s -> (length s * 4, read ("0x" ++ s))) <$> P.many1 P.hexDigit
 
+parseFloat :: Parser (Some W4.FloatPrecisionRepr, BF.BigFloat)
+parseFloat = do
+  _ <- P.string "#f#"
+  -- We printed the nat reprs out in decimal
+  eb :: Natural
+     <- read <$> P.many1 P.digit
+  _ <- P.char '#'
+  sb :: Natural
+     <- read <$> P.many1 P.digit
+  _ <- P.char '#'
+
+  Some ebRepr <- return (PN.mkNatRepr eb)
+  Some sbRepr <- return (PN.mkNatRepr sb)
+  case (PN.testLeq (PN.knownNat @2) ebRepr, PN.testLeq (PN.knownNat @2) sbRepr) of
+    (Just PN.LeqProof, Just PN.LeqProof) -> do
+      let rep = W4.FloatingPointPrecisionRepr ebRepr sbRepr
+
+      -- The float value itself is printed out as a hex literal
+      hexDigits <- P.many1 P.hexDigit
+      -- We know our format: it is determined by the exponent bits (eb) and the
+      -- significand bits (sb) parsed above
+      let fmt = BF.precBits (fromIntegral sb) <> BF.expBits (fromIntegral eb)
+      let (bf, status) = BF.bfFromString 16 fmt hexDigits
+      case status of
+        BF.Ok -> return (Some rep, bf)
+        _ -> P.unexpected ("Error parsing hex float: 0x" ++ hexDigits)
+    _ -> P.unexpected ("Invalid exponent or significand size: " ++ show (eb, sb))
+
+
 parseAtom :: Parser Atom
 parseAtom
   =     P.try (ANat  <$> parseNat)
+  P.<|> P.try (uncurry AFloat <$> parseFloat)
   P.<|> P.try (AReal <$> parseReal)
   P.<|> P.try (AInt  <$> parseInt)
   P.<|> P.try (AId   <$> parseId)

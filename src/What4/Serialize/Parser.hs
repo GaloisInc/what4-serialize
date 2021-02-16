@@ -211,7 +211,6 @@ readBaseType sexpr =
     S.WFSAtom (AId atom) ->
       case (T.unpack atom) of
         "Bool" -> return $ Some BaseBoolRepr
-        "Nat" -> return $ Some BaseNatRepr
         "Int" -> return $ Some BaseIntegerRepr
         "Real" -> return $ Some BaseRealRepr
         "String" -> return $ Some (BaseStringRepr UnicodeRepr)
@@ -332,10 +331,6 @@ opTable =
   , ("orp", Op2 knownRepr $ W4.orPred)
   , ("xorp", Op2 knownRepr $ W4.xorPred)
   , ("notp", Op1 knownRepr $ W4.notPred)
-  -- -- -- Natural ops -- -- --
-  , ("natmul", Op2 knownRepr $ W4.natMul)
-  , ("natadd", Op2 knownRepr $ W4.natAdd)
-  , ("natle", Op2 knownRepr $ W4.natLe)
   -- -- -- Integer ops -- -- --
   , ("intmul", Op2 knownRepr $ W4.intMul)
   , ("intadd", Op2 knownRepr $ W4.intAdd)
@@ -798,12 +793,14 @@ readExpr ::
 readExpr (S.WFSAtom (AInt n)) = do
   sym <- R.reader procSym
   liftIO $ (Some <$> W4.intLit sym n)
-readExpr (S.WFSAtom (ANat n)) = do
-  sym <- R.reader procSym
-  liftIO $ (Some <$> W4.natLit sym n)
+readExpr (S.WFSAtom (ANat _)) =
+  E.throwError "Bare Natural literals are no longer used"
 readExpr (S.WFSAtom (ABool b)) = do
   sym <- R.reader procSym
   liftIO $ return $ Some $ W4.backendPred sym b
+readExpr (S.WFSAtom (AFloat (Some repr) bf)) = do
+  sym <- R.reader procSym
+  liftIO $ (Some <$> W4.floatLit sym repr bf)
 readExpr (S.WFSAtom (AStr prefix content)) = do
   sym <- R.reader procSym
   case prefix of
