@@ -231,14 +231,15 @@ parseFloat = do
      <- read <$> P.many1 P.digit
   _ <- P.char '#'
 
+  -- The float value itself is printed out as a hex literal
+  hexDigits <- P.many1 P.hexDigit
+
   Some ebRepr <- return (PN.mkNatRepr eb)
   Some sbRepr <- return (PN.mkNatRepr sb)
   case (PN.testLeq (PN.knownNat @2) ebRepr, PN.testLeq (PN.knownNat @2) sbRepr) of
     (Just PN.LeqProof, Just PN.LeqProof) -> do
       let rep = W4.FloatingPointPrecisionRepr ebRepr sbRepr
 
-      -- The float value itself is printed out as a hex literal
-      hexDigits <- P.many1 P.hexDigit
       -- We know our format: it is determined by the exponent bits (eb) and the
       -- significand bits (sb) parsed above
       let fmt = BF.precBits (fromIntegral sb) <> BF.expBits (fromIntegral eb)

@@ -67,6 +67,7 @@ test-suite what4-serialize-tests
                  , directory
                  , exceptions
                  , hedgehog
+                 , libBF
                  , tasty
                  , tasty-hunit
                  , tasty-hedgehog

@@ -62,9 +62,11 @@ import qualified Data.SCargot.Repr.WellFormed as S
 
 import           What4.BaseTypes
 import qualified What4.Expr as W4
+import qualified What4.Expr.ArrayUpdateMap as WAU
 import qualified What4.Expr.BoolMap as BooM
 import qualified What4.Expr.Builder as W4
 import qualified What4.Expr.WeightedSum as WSum
+import qualified What4.IndexLit as WIL
 import qualified What4.Interface as W4
 import qualified What4.Symbol as W4
 import qualified What4.Utils.StringLiteral as W4S
@@ -614,6 +616,13 @@ convertAppExpr' = go . W4.appExprApp
           s <- goE e
           return $ S.L [ident "sbvToInteger", s]
 
+        go (W4.FloatNeg _repr e) = do
+          s <- goE e
+          return $ S.L [ident "floatneg", s]
+        go (W4.FloatAbs _repr e) = do
+          s <- goE e
+          return $ S.L [ident "floatabs", s]
+
         go (W4.IntDiv e1 e2) = do
           s1 <- goE e1
           s2 <- goE e2
@@ -655,9 +664,22 @@ convertAppExpr' = go . W4.appExprApp
             [idx] -> return $ S.L [ ident "select", s, idx]
             _ -> error $ "multidimensional arrays not supported"
 
+        go (W4.ArrayMap _idxReprs _resRepr updateMap arr) = do
+          updates <- mapM convertArrayUpdate (WAU.toList updateMap)
+          arr' <- goE arr
+          return $ S.L [ ident "arrayMap"
+                       , S.L updates
+                       , arr'
+                       ]
 
         go app = error $ "unhandled App: " ++ show app
 
+        convertArrayUpdate :: forall tp1 ctx . (Ctx.Assignment WIL.IndexLit ctx, W4.Expr t tp1) -> Memo t SExpr
+        convertArrayUpdate (idxLits, e) = do
+          e' <- goE e
+          return $ S.L [ S.L (FC.toListFC convertIndexLit idxLits)
+                       , e'
+                       ]
 
         -- -- -- -- Helper functions! -- -- -- --
         
@@ -699,6 +721,11 @@ convertAppExpr' = go . W4.appExprApp
                        return $ S.L [ident "notp", s]
                  in F.foldrM onEach (strBase base) ts
 
+convertIndexLit :: WIL.IndexLit tp -> SExpr
+convertIndexLit il =
+  case il of
+    WIL.IntIndexLit iidx -> int iidx
+    WIL.BVIndexLit irep bvidx -> bitvec (natValue irep) (BV.asUnsigned bvidx)
 
 convertExprAssignment ::
   Ctx.Assignment (W4.Expr t) sh
@@ -732,7 +759,9 @@ convertBaseType tp = case tp of
   W4.BaseBVRepr wRepr -> S.L [S.A (AId "BV"), S.A (AInt (NR.intValue wRepr)) ]
   W4.BaseStructRepr tps -> S.L [ S.A (AId "Struct"), S.L (convertBaseTypes tps) ]
   W4.BaseArrayRepr ixs repr -> S.L [S.A (AId "Array"), S.L $ convertBaseTypes ixs , convertBaseType repr]
-  _ -> error "can't print base type"
+  W4.BaseFloatRepr (W4.FloatingPointPrecisionRepr eRepr sRepr) ->
+    S.L [ S.A (AId "Float"), S.A (AInt (NR.intValue eRepr)), S.A (AInt (NR.intValue sRepr)) ]
+
 
 
 convertStringInfo :: StringInfoRepr si -> SExpr

@@ -34,11 +34,13 @@ module What4.Serialize.Parser
   , printSExpr
   ) where
 
-import qualified Control.Monad.Reader as R
 import qualified Control.Monad.Except as E
 import           Control.Monad.IO.Class ( liftIO )
-import           Data.Kind
+import qualified Control.Monad.Reader as R
+import qualified Data.BitVector.Sized as BV
+import qualified Data.Foldable as F
 import qualified Data.HashMap.Lazy as HM
+import           Data.Kind
 import qualified Data.SCargot.Repr.WellFormed as S
 
 import qualified Data.List as List
@@ -47,7 +49,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import           Text.Printf ( printf )
 
-import qualified Data.BitVector.Sized as BV
+import qualified Data.Parameterized.NatRepr as PN
 import qualified Data.Parameterized.Ctx as Ctx
 import qualified Data.Parameterized.Context as Ctx
 import           Data.Parameterized.Classes
@@ -55,8 +57,9 @@ import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.TraversableFC as FC
 import           What4.BaseTypes
 
+import qualified What4.Expr.ArrayUpdateMap as WAU
 import qualified What4.Expr.Builder as W4
-import qualified What4.Symbol as W4
+import qualified What4.IndexLit as WIL
 import qualified What4.Interface as W4
 
 import           What4.Serialize.SETokens ( Atom(..), printSExpr, parseSExpr )
@@ -129,7 +132,7 @@ lookupFn nm = do
 -- | @(deserializeExpr sym)@ is equivalent
 -- to @(deserializeExpr' (defaultConfig sym))@.
 deserializeExpr ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => sym
   -> SExpr
   -> IO (Either String (Some (W4.SymExpr sym)))
@@ -137,7 +140,7 @@ deserializeExpr sym = deserializeExprWithConfig sym cfg
   where cfg = defaultConfig sym
 
 deserializeExprWithConfig ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => sym
   -> Config sym
   -> SExpr
@@ -153,7 +156,7 @@ deserializeExprWithConfig sym cfg sexpr = runProcessor env (readExpr sexpr)
 -- | @(deserializeSymFn sym)@ is equivalent
 -- to @(deserializeSymFn' (defaultConfig sym))@.
 deserializeSymFn ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => sym
   -> SExpr
   -> IO (Either String (SomeSymFn sym))
@@ -161,7 +164,7 @@ deserializeSymFn sym = deserializeSymFnWithConfig sym cfg
   where cfg = defaultConfig sym
 
 deserializeSymFnWithConfig ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => sym
   -> Config sym
   -> SExpr
@@ -222,6 +225,13 @@ readBaseType sexpr =
         -> return $ Some (BaseBVRepr wRepr)
       | otherwise
         -> panic
+    S.WFSList [(S.WFSAtom (AId "Float")), (S.WFSAtom (AInt e)), (S.WFSAtom (AInt s))]
+      | Just (Some eRepr) <- someNat e
+      , Just (Some sRepr) <- someNat s
+      , Just LeqProof <- testLeq (knownNat @2) eRepr
+      , Just LeqProof <- testLeq (knownNat @2) sRepr
+        -> return (Some (BaseFloatRepr (FloatingPointPrecisionRepr eRepr sRepr)))
+      | otherwise -> panic
     S.WFSList [(S.WFSAtom (AId "Struct")), args] -> do
       Some tps <- readBaseTypes args
       return $ Some (BaseStructRepr tps)
@@ -262,6 +272,10 @@ getBVProof expr =
 -- | Operator type descriptions for parsing s-expression of
 -- the form @(operator operands ...)@.
 data Op sym where
+    FloatOp1 :: (forall fpp . sym ->
+                 W4.SymFloat sym fpp ->
+                 IO (W4.SymFloat sym fpp))
+             -> Op sym
     -- | Generic unary operator description.
     Op1 :: Ctx.Assignment BaseTypeRepr (Ctx.EmptyCtx Ctx.::> arg1)
         -> (sym ->
@@ -331,6 +345,9 @@ opTable =
   , ("orp", Op2 knownRepr $ W4.orPred)
   , ("xorp", Op2 knownRepr $ W4.xorPred)
   , ("notp", Op1 knownRepr $ W4.notPred)
+  -- -- -- Float ops -- -- --
+  , ("floatneg", FloatOp1 W4.floatNeg)
+  , ("floatabs", FloatOp1 W4.floatAbs)
   -- -- -- Integer ops -- -- --
   , ("intmul", Op2 knownRepr $ W4.intMul)
   , ("intadd", Op2 knownRepr $ W4.intAdd)
@@ -440,7 +457,7 @@ opTable =
 -- | Verify a list of arguments has a single argument and
 -- return it, else raise an error.
 readOneArg ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => [SExpr]
   -> Processor sym (Some (W4.SymExpr sym))
 readOneArg operands = do
@@ -452,7 +469,7 @@ readOneArg operands = do
 -- | Verify a list of arguments has two arguments and return
 -- it, else raise an error.
 readTwoArgs ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => [SExpr]
   -> Processor sym (Some (W4.SymExpr sym), Some (W4.SymExpr sym))
 readTwoArgs operands = do
@@ -464,7 +481,7 @@ readTwoArgs operands = do
 -- | Verify a list of arguments has three arguments and
 -- return it, else raise an error.
 readThreeArgs ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => [SExpr]
   -> Processor sym (Some (W4.SymExpr sym), Some (W4.SymExpr sym), Some (W4.SymExpr sym))
 readThreeArgs operands = do
@@ -477,7 +494,7 @@ readThreeArgs operands = do
 
 -- | Reads an "application" form, i.e. @(operator operands ...)@.
 readApp ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => SExpr
   -> [SExpr]
   -> Processor sym (Some (W4.SymExpr sym))
@@ -500,6 +517,12 @@ readApp opRaw@(S.WFSAtom (AId operator)) operands = do
                ++(T.unpack $ printSExpr mempty $ S.WFSList (opRaw:operands))++"\n") $
   -- Parse an expression of the form @(fnname operands ...)@
     case lookupOp @sym operator of
+      Just (FloatOp1 fn) -> do
+        args <- readExprs operands
+        case args of
+          [Some a1]
+            | BaseFloatRepr _ <- W4.exprType a1 -> liftIO (Some <$> fn sym a1)
+          _ -> E.throwError "Unable to unpack FloatOp1 arg in Formula.Parser readApp"
       Just (Op1 arg_types fn) -> do
         args <- readExprs operands
         exprAssignment arg_types args >>= \case
@@ -609,6 +632,26 @@ readApp opRaw@(S.WFSAtom (AId operator)) operands = do
               Nothing -> E.throwError $ printf "Array result type %s does not match %s"
                          (show resRepr)
                          (show (W4.exprType expr))
+
+          "arrayMap" ->
+            -- arrayMap(idxs, array)
+
+            -- The list of indexes is a list of pairs where each pair is:
+            --
+            -- > (indexList, expr)
+
+
+            -- Each list of indexes is a list of 'IndexLit' (since we have multi-dimensional indexing)
+            case operands of
+              [updateSExprList, arrSExpr] -> do
+                Some arrExpr <- readExpr arrSExpr
+                case W4.exprType arrExpr of
+                  BaseArrayRepr idxReprs arrTyRepr -> do
+                    updateMap <- expectArrayUpdateMap idxReprs arrTyRepr updateSExprList
+                    liftIO (Some <$> W4.sbMakeExpr sym (W4.ArrayMap idxReprs arrTyRepr updateMap arrExpr))
+                  repr -> E.throwError $ unwords ["expected an array type for the value in 'arrayMap', but got", show repr]
+              _ -> E.throwError $ unwords ["expected a list of indices and an array expression, but got", show operands]
+
           "field" -> do
             case operands of
               [rawStruct, S.WFSAtom (AInt rawIdx)] -> do
@@ -714,7 +757,71 @@ readApp rator rands = E.throwError $ ("readApp could not parse the following: "
 intToNatM :: (E.MonadError String m) => Integer -> m (Some NatRepr)
 intToNatM = fromMaybeError "integer must be non-negative to be a nat" . someNat
 
+-- | Parse a list of array updates where each entry in the list is:
+--
+-- > (idxs, elt)
+--
+-- where each @idxs@ is a list (assignment) of indexes (with type @idxReprs@)
+-- and each element is an expr.
+--
+-- NOTE: We assume that there are no duplicates in the list and apply the
+-- updates in an arbitrary order.  This is true for any map serialized by this
+-- library.
+expectArrayUpdateMap
+  :: forall sym t st fs tp i itp
+   . (sym ~ W4.ExprBuilder t st fs)
+  => Ctx.Assignment BaseTypeRepr (i Ctx.::> itp)
+  -> BaseTypeRepr tp
+  -> SExpr
+  -> Processor sym (WAU.ArrayUpdateMap (W4.SymExpr sym) (i Ctx.::> itp) tp)
+expectArrayUpdateMap idxReprs arrTyRepr updateSExprList =
+  case updateSExprList of
+    S.L items -> F.foldrM expectArrayUpdateEntry WAU.empty items
+    _ -> E.throwError "Expected a list of array element updates in ArrayMap"
+  where
+    expectArrayUpdateEntry pair updateMap =
+      case pair of
+        S.L [S.L idxListExprs, elt] -> do
+          idxs <- Ctx.traverseWithIndex (parseIndexLit idxListExprs) idxReprs
+          Some x <- readExpr elt
+          case testEquality arrTyRepr (W4.exprType x) of
+            Just Refl -> return (WAU.insert arrTyRepr idxs x updateMap)
+            Nothing -> E.throwError (concat [ "Invalid element type in ArrayMap update: expected "
+                                            , show arrTyRepr
+                                            , " but got "
+                                            , show (W4.exprType x)])
+        _ -> E.throwError "Unexpected ArrayMap update item structure"
 
+-- | Safe list indexing
+--
+-- This version only traverses the list once (compared to computing the length
+-- and then using unsafe indexing)
+(!?) :: [a] -> Int -> Maybe a
+lst !? idx
+  | idx < 0 = Nothing
+  | otherwise = go idx lst
+  where
+    go 0 (x:_xs) = Just x
+    go i (_:xs) = go (i - 1) xs
+    go _ [] = Nothing
+
+-- | Parse a single 'WIL.IndexLit' out of a list of 'SExpr' (at the named index)
+--
+-- This is used to build the assignment of indexes
+parseIndexLit :: [SExpr]
+               -> Ctx.Index ctx tp
+               -> BaseTypeRepr tp
+               -> Processor sym (WIL.IndexLit tp)
+parseIndexLit exprs idx repr
+  | Just (S.A atom) <- exprs !? Ctx.indexVal idx =
+      case (repr, atom) of
+        (BaseBVRepr w, ABV w' val)
+          | PN.intValue w == toInteger w' ->
+            return (WIL.BVIndexLit w (BV.mkBV w val))
+          | otherwise -> E.throwError ("Array update index bitvector size mismatch: expected " ++ show w ++ " but got " ++ show w')
+        (BaseIntegerRepr, AInt i) -> return (WIL.IntIndexLit i)
+        _ -> E.throwError ("Unexpected array update index type: " ++ show repr)
+  | otherwise = E.throwError ("Invalid or missing array update index at " ++ show idx)
 
 data ArrayJudgment :: BaseType -> BaseType -> Type where
   ArraySingleDim :: forall idx res.
@@ -754,7 +861,7 @@ exprAssignment tpAssns exs = do
 -- let, parse the bindings into the Reader monad's state and
 -- then parse the body with those newly bound variables.
 readLetExpr ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => [SExpr]
   -- ^ Bindings in a let-expression.
   -> SExpr
@@ -770,7 +877,7 @@ readLetExpr bindings _body = E.throwError $
 
 
 readLetFnExpr ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => [SExpr]
   -- ^ Bindings in a let-expression.
   -> SExpr
@@ -787,7 +894,7 @@ readLetFnExpr bindings _body = E.throwError $
   
 -- | Parse an arbitrary expression.
 readExpr ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => SExpr
   -> Processor sym (Some (W4.SymExpr sym))
 readExpr (S.WFSAtom (AInt n)) = do
@@ -851,13 +958,13 @@ readExpr (S.WFSList (operator:operands)) = readApp operator operands
 
 -- | Parse multiple expressions in a list.
 readExprs ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => [SExpr]
   -> Processor sym [Some (W4.SymExpr sym)]
 readExprs exprs = mapM readExpr exprs
 
 readExprsAsAssignment ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => [SExpr]
   -> Processor sym (Some (Ctx.Assignment (W4.SymExpr sym)))
 readExprsAsAssignment exprs = Ctx.fromList <$> readExprs exprs
@@ -899,9 +1006,9 @@ someVarExpr ::
   -> Some (W4.SymExpr sym)
 someVarExpr sym (Some bv) = Some (W4.varExpr sym bv)
 
-  
+
 readSymFn ::
-  forall sym . (W4.IsSymExprBuilder sym, ShowF (W4.SymExpr sym))
+  forall sym t st fs . (sym ~ W4.ExprBuilder t st fs)
   => SExpr
   -> Processor sym (SomeSymFn sym)
 readSymFn (S.WFSList [ S.WFSAtom (AId "definedfn")
