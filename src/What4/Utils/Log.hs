@@ -59,7 +59,6 @@ module What4.Utils.Log (
   namedM
   ) where
 
-import qualified GHC.Err.Located as Ghc
 import qualified GHC.Stack as Ghc
 
 import qualified Control.Concurrent as Cc
@@ -448,4 +447,4 @@ writeLogEvent cfg cs level msg = do
                  (_,topSrcLoc):rest -> case rest of
                    []                 -> (Nothing,           topSrcLoc)
                    (enclosingFun,_):_ -> (Just enclosingFun, topSrcLoc)
-                 [] -> Ghc.error "Do we ever not have a call site?"
+                 [] -> error "Do we ever not have a call site?"

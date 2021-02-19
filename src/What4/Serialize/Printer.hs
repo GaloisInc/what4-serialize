@@ -62,22 +62,24 @@ import qualified Data.SCargot.Repr.WellFormed as S
 
 import           What4.BaseTypes
 import qualified What4.Expr as W4
+import qualified What4.Expr.ArrayUpdateMap as WAU
 import qualified What4.Expr.BoolMap as BooM
 import qualified What4.Expr.Builder as W4
 import qualified What4.Expr.WeightedSum as WSum
+import qualified What4.IndexLit as WIL
 import qualified What4.Interface as W4
 import qualified What4.Symbol as W4
 import qualified What4.Utils.StringLiteral as W4S
 
 
 import           What4.Serialize.SETokens ( Atom(..), printSExpr
-                                          , ident, int, string
-                                          , bitvec, bool, nat, real
+                                          , ident, int, nat, string
+                                          , bitvec, bool, real, float
                                           )
 
 type SExpr = S.WellFormedSExpr Atom
 
-data SomeExprSymFn t = forall dom ret. SomeExprSymFn (W4.ExprSymFn t (W4.Expr t) dom ret)
+data SomeExprSymFn t = forall dom ret. SomeExprSymFn (W4.ExprSymFn t dom ret)
 
 instance Eq (SomeExprSymFn t) where
   (SomeExprSymFn fn1) == (SomeExprSymFn fn2) =
@@ -178,7 +180,7 @@ serializeExprWithConfig cfg expr = serializeSomething cfg (convertExprWithLet ex
 -- top-level let-binding around the emitted expression
 -- (unless there are no terms with non-atomic terms which
 -- can be shared).
-serializeSymFn :: W4.ExprSymFn t (W4.Expr t) dom ret -> SExpr
+serializeSymFn :: W4.ExprSymFn t dom ret -> SExpr
 serializeSymFn = resSExpr . (serializeSymFnWithConfig defaultConfig)
 
 
@@ -188,7 +190,7 @@ serializeSymFn = resSExpr . (serializeSymFnWithConfig defaultConfig)
 -- achieved via a top-level let-binding around the emitted
 -- expression (unless there are no terms with non-atomic
 -- terms which can be shared).
-serializeSymFnWithConfig :: Config -> W4.ExprSymFn t (W4.Expr t) dom ret -> Result t
+serializeSymFnWithConfig :: Config -> W4.ExprSymFn t dom ret -> Result t
 serializeSymFnWithConfig cfg fn = serializeSomething cfg (convertSymFn fn)
 
 -- | Run the given Memo computation to produce a well-formed
@@ -305,7 +307,7 @@ mkLet bindings body = S.L [ident "let", S.L bindings, body]
 -- | Converts a What4 ExprSymFn into an s-expression within
 -- the Memo monad (i.e., no `let` or `letfn`s are emitted).
 convertSymFn :: forall t args ret
-              . W4.ExprSymFn t (W4.Expr t) args ret
+              . W4.ExprSymFn t args ret
              -> Memo t SExpr
 convertSymFn symFn@(W4.ExprSymFn _ symFnName symFnInfo _) = do
  case symFnInfo of
@@ -360,7 +362,6 @@ freshName tp = do
   MS.modify' $ (\e -> e {envIdCounter = idCount + 1})
   let prefix = case tp of
                  W4.BaseBoolRepr{} -> "bool"
-                 W4.BaseNatRepr{} -> "nat"
                  W4.BaseIntegerRepr{} -> "int"
                  W4.BaseRealRepr{} -> "real"
                  W4.BaseFloatRepr{} -> "fl"
@@ -371,7 +372,7 @@ freshName tp = do
                  W4.BaseArrayRepr{} -> "arr"
   return $ T.pack $ prefix++(show $ idCount)
 
-freshFnName :: W4.ExprSymFn t e args ret -> Memo t Text
+freshFnName :: W4.ExprSymFn t args ret -> Memo t Text
 freshFnName fn = do
   idCount <- MS.gets envIdCounter
   MS.modify' $ (\e -> e {envIdCounter = idCount + 1})
@@ -415,7 +416,6 @@ convertExpr initialExpr = do
               letVarName <- addLetBinding key sexp (W4.exprType initialExpr)
               return $ ident letVarName
   where go :: W4.Expr t tp -> Memo t SExpr
-        go (W4.SemiRingLiteral W4.SemiRingNatRepr val _) = return $ nat val
         go (W4.SemiRingLiteral W4.SemiRingIntegerRepr val _) = return $ int val -- do we need/want these?
         go (W4.SemiRingLiteral W4.SemiRingRealRepr val _) = return $ real val
         go (W4.SemiRingLiteral (W4.SemiRingBVRepr _ sz) val _) = return $ bitvec (natValue sz) (BV.asUnsigned val)
@@ -426,6 +426,7 @@ convertExpr initialExpr = do
             W4.Char16Repr -> error "Char16 strings are not yet supported"
               -- TODO - there is no `W4S.toLEByteString` currently... hmm...
               -- return $ string (Some W4.Char16Repr) $ T.decodeUtf16LE $ W4S.toLEByteString $ W4S.fromChar16Lit str
+        go (W4.FloatExpr prec bf _) = return $ float prec bf
         go (W4.BoolExpr b _) = return $ bool b
         go (W4.AppExpr appExpr) = convertAppExpr' appExpr
         go (W4.NonceAppExpr nae) =
@@ -522,13 +523,6 @@ convertAppExpr' = go . W4.appExprApp
                   sval v = return $ bitvec (natValue w) (BV.asUnsigned v)
                   add x y = let op = ident "bvxor" in return $ S.L [ op, x, y ]
               in WSum.evalM add smul sval sm
-            W4.SemiRingNatRepr ->
-              let smul mul e = do
-                    s <- goE e
-                    return $ S.L [ ident "natmul", nat mul, s]
-                  sval v = return $ nat v
-                  add x y = return $ S.L [ ident "natadd", x, y ]
-              in WSum.evalM add smul sval sm
             W4.SemiRingIntegerRepr ->
               let smul mul e = do
                     s <- goE e
@@ -558,7 +552,6 @@ convertAppExpr' = go . W4.appExprApp
               case maybeS of
                 Just s -> return s
                 Nothing -> return $ int 1
-            W4.SemiRingNatRepr     -> error "convertApp W4.SemiRingProd Nat unsupported"
             W4.SemiRingRealRepr    -> error "convertApp W4.SemiRingProd Real unsupported"
 
         go (W4.SemiRingLe sr e1 e2) = do
@@ -567,8 +560,6 @@ convertAppExpr' = go . W4.appExprApp
           case sr of
             W4.OrderedSemiRingIntegerRepr -> do
               return $ S.L [ ident "intle", s1, s2]
-            W4.OrderedSemiRingNatRepr -> do
-              return $ S.L [ ident "natle", s1, s2]
             W4.OrderedSemiRingRealRepr -> error $ "Printer: SemiRingLe is not supported for reals"
 
         go (W4.BVOrBits width bs) = do
@@ -625,6 +616,13 @@ convertAppExpr' = go . W4.appExprApp
           s <- goE e
           return $ S.L [ident "sbvToInteger", s]
 
+        go (W4.FloatNeg _repr e) = do
+          s <- goE e
+          return $ S.L [ident "floatneg", s]
+        go (W4.FloatAbs _repr e) = do
+          s <- goE e
+          return $ S.L [ident "floatabs", s]
+
         go (W4.IntDiv e1 e2) = do
           s1 <- goE e1
           s2 <- goE e2
@@ -666,8 +664,22 @@ convertAppExpr' = go . W4.appExprApp
             [idx] -> return $ S.L [ ident "select", s, idx]
             _ -> error $ "multidimensional arrays not supported"
 
+        go (W4.ArrayMap _idxReprs _resRepr updateMap arr) = do
+          updates <- mapM convertArrayUpdate (WAU.toList updateMap)
+          arr' <- goE arr
+          return $ S.L [ ident "arrayMap"
+                       , S.L updates
+                       , arr'
+                       ]
+
         go app = error $ "unhandled App: " ++ show app
 
+        convertArrayUpdate :: forall tp1 ctx . (Ctx.Assignment WIL.IndexLit ctx, W4.Expr t tp1) -> Memo t SExpr
+        convertArrayUpdate (idxLits, e) = do
+          e' <- goE e
+          return $ S.L [ S.L (FC.toListFC convertIndexLit idxLits)
+                       , e'
+                       ]
 
         -- -- -- -- Helper functions! -- -- -- --
         
@@ -709,6 +721,11 @@ convertAppExpr' = go . W4.appExprApp
                        return $ S.L [ident "notp", s]
                  in F.foldrM onEach (strBase base) ts
 
+convertIndexLit :: WIL.IndexLit tp -> SExpr
+convertIndexLit il =
+  case il of
+    WIL.IntIndexLit iidx -> int iidx
+    WIL.BVIndexLit irep bvidx -> bitvec (natValue irep) (BV.asUnsigned bvidx)
 
 convertExprAssignment ::
   Ctx.Assignment (W4.Expr t) sh
@@ -717,7 +734,7 @@ convertExprAssignment es =
   mapM (\(Some e) -> convertExpr e) (FC.toListFC Some es)
 
 convertFnApp ::
-  W4.ExprSymFn t (W4.Expr t) args ret
+  W4.ExprSymFn t args ret
   -> Ctx.Assignment (W4.Expr t) args
   -> Memo t SExpr
 convertFnApp fn args = do
@@ -735,7 +752,6 @@ convertFnApp fn args = do
 convertBaseType :: BaseTypeRepr tp -> SExpr
 convertBaseType tp = case tp of
   W4.BaseBoolRepr -> S.A $ AId "Bool"
-  W4.BaseNatRepr -> S.A $ AId "Nat"
   W4.BaseIntegerRepr -> S.A $ AId "Int"
   W4.BaseRealRepr -> S.A $ AId "Real"
   W4.BaseStringRepr si -> S.L [S.A $ AId "String", convertStringInfo si]
@@ -743,7 +759,9 @@ convertBaseType tp = case tp of
   W4.BaseBVRepr wRepr -> S.L [S.A (AId "BV"), S.A (AInt (NR.intValue wRepr)) ]
   W4.BaseStructRepr tps -> S.L [ S.A (AId "Struct"), S.L (convertBaseTypes tps) ]
   W4.BaseArrayRepr ixs repr -> S.L [S.A (AId "Array"), S.L $ convertBaseTypes ixs , convertBaseType repr]
-  _ -> error "can't print base type"
+  W4.BaseFloatRepr (W4.FloatingPointPrecisionRepr eRepr sRepr) ->
+    S.L [ S.A (AId "Float"), S.A (AInt (NR.intValue eRepr)), S.A (AInt (NR.intValue sRepr)) ]
+
 
 
 convertStringInfo :: StringInfoRepr si -> SExpr

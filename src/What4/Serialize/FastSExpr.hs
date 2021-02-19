@@ -1,5 +1,9 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 -- | This module implements a specialized s-expression parser
 --
 -- The parser in s-cargot is very general, but that also makes it a bit
@@ -12,11 +16,13 @@ module What4.Serialize.FastSExpr (
 
 import           Control.Applicative
 import qualified Control.Monad.Fail as MF
+import qualified Data.Parameterized.NatRepr as PN
 import           Data.Parameterized.Some ( Some(..) )
 import           Data.Ratio ( (%) )
 import qualified Data.SCargot.Repr.WellFormed as SC
+import qualified Data.Set as Set
 import qualified Data.Text as T
-import qualified Data.Void as DV
+import qualified LibBF as BF
 import           Numeric.Natural ( Natural )
 import qualified Text.Megaparsec as TM
 import qualified Text.Megaparsec.Char as TMC
@@ -28,10 +34,25 @@ import qualified What4.Serialize.SETokens as WST
 parseSExpr :: T.Text -> Either String (SC.WellFormedSExpr WST.Atom)
 parseSExpr t =
   case TM.runParser (ws >> parse) "<input>" t of
-    Left errBundle -> Left (show errBundle)
+    Left errBundle -> Left (TM.errorBundlePretty errBundle)
     Right a -> Right a
 
-type Parser a = TM.Parsec DV.Void T.Text a
+data What4ParseError = ErrorParsingHexFloat String
+                     | InvalidExponentOrSignificandSize Natural Natural
+  deriving (Show, Eq, Ord)
+
+instance TM.ShowErrorComponent What4ParseError where
+  showErrorComponent e =
+    case e of
+      ErrorParsingHexFloat hf -> "Error parsing hex float literal: " ++ hf
+      InvalidExponentOrSignificandSize ex s ->
+        concat [ "Invalid exponent or significand size: exponent size = "
+               , show ex
+               , ", significand size = "
+               , show s
+               ]
+
+type Parser a = TM.Parsec What4ParseError T.Text a
 
 parse :: Parser (SC.WellFormedSExpr WST.Atom)
 parse = parseList <|> (SC.WFSAtom <$> lexeme parseAtom)
@@ -116,6 +137,36 @@ parseStr = do
       c <- TM.anySingle
       return ['\\', c]
 
+parseFloat :: Parser (Some WT.FloatPrecisionRepr, BF.BigFloat)
+parseFloat = do
+  _ <- TMC.string "#f#"
+  -- We printed the nat reprs out in decimal
+  eb :: Natural
+     <- TMCL.decimal
+  _ <- TMC.char '#'
+  sb :: Natural
+     <- TMCL.decimal
+  _ <- TMC.char '#'
+
+  -- The float value itself is printed out as a hex literal
+  hexDigits <- TM.some TMC.hexDigitChar
+
+  Some ebRepr <- return (PN.mkNatRepr eb)
+  Some sbRepr <- return (PN.mkNatRepr sb)
+  case (PN.testLeq (PN.knownNat @2) ebRepr, PN.testLeq (PN.knownNat @2) sbRepr) of
+    (Just PN.LeqProof, Just PN.LeqProof) -> do
+      let rep = WT.FloatingPointPrecisionRepr ebRepr sbRepr
+
+      -- We know our format: it is determined by the exponent bits (eb) and the
+      -- significand bits (sb) parsed above
+      let fmt = BF.precBits (fromIntegral sb) <> BF.expBits (fromIntegral eb)
+      let (bf, status) = BF.bfFromString 16 fmt hexDigits
+      case status of
+        BF.Ok -> return (Some rep, bf)
+        _ -> TM.fancyFailure (Set.singleton (TM.ErrorCustom (ErrorParsingHexFloat hexDigits)))
+    _ -> TM.fancyFailure (Set.singleton (TM.ErrorCustom (InvalidExponentOrSignificandSize eb sb)))
+
+
 parseAtom :: Parser WST.Atom
 parseAtom = TM.try (uncurry WST.ABV <$> parseBV)
         <|> TM.try (WST.ABool <$> parseBool)
@@ -124,6 +175,7 @@ parseAtom = TM.try (uncurry WST.ABV <$> parseBV)
         <|> TM.try (WST.ANat <$> parseNat)
         <|> TM.try (WST.AReal <$> parseReal)
         <|> TM.try (uncurry WST.AStr <$> parseStr)
+        <|> TM.try (uncurry WST.AFloat <$> parseFloat)
 
 ws :: Parser ()
 ws = TMCL.space TMC.space1 (TMCL.skipLineComment (T.pack ";")) empty

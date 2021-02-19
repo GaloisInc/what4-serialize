@@ -25,6 +25,7 @@ import qualified Data.Text as T
 import qualified Data.Map as Map
 import qualified Data.Map.Ordered as OMap
 import           Hedgehog
+import qualified LibBF as BF
 
 -- import qualified What4.Utils.Log as Log
 import           Test.Tasty
@@ -56,6 +57,12 @@ symFnTests = [
   ]
 
 data BuilderData t = NoBuilderData
+
+floatSinglePrecision :: FloatPrecisionRepr Prec32
+floatSinglePrecision = knownRepr
+
+floatSingleType :: BaseTypeRepr (BaseFloatType Prec32)
+floatSingleType = BaseFloatRepr floatSinglePrecision
 
 testBasicArguments :: (T.Text -> Either String WIN.SExpr) -> [TestTree]
 testBasicArguments parseSExpr =
@@ -104,6 +111,10 @@ testExpressions parseSExpr =
         withTests 1 $
         property $ mkEquivalenceTest parseSExpr Ctx.empty $ \sym _ -> do
           WI.intLit sym (-1)
+    , testProperty "float lit" $
+        withTests 1 $
+        property $ mkEquivalenceTest parseSExpr Ctx.empty $ \sym _ -> do
+          WI.floatLit sym floatSinglePrecision (BF.bfFromInt 100)
     , testProperty "simple struct" $
         withTests 1 $
         property $ mkEquivalenceTest parseSExpr Ctx.empty $ \sym _ -> do
@@ -133,8 +144,17 @@ testExpressions parseSExpr =
         property $ mkEquivalenceTest parseSExpr (Ctx.empty :> BaseIntegerRepr) $ \sym bvs -> do
           let i1 = bvs ! Ctx.baseIndex
           WI.integerToBV sym i1 (WI.knownNat @32)
+    , testProperty "float negate" $
+        withTests 1 $
+        property $ mkEquivalenceTest parseSExpr (Ctx.empty :> floatSingleType ) $ \sym flts -> do
+          let f1 = flts ! Ctx.baseIndex
+          WI.floatNeg sym f1
+    , testProperty "float abs" $
+        withTests 1 $
+        property $ mkEquivalenceTest parseSExpr (Ctx.empty :> floatSingleType ) $ \sym flts -> do
+          let f1 = flts ! Ctx.baseIndex
+          WI.floatAbs sym f1
     ]
-
 
 mkEquivalenceTest :: forall m args ret
                    . ( MonadTest m
