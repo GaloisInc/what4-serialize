@@ -57,17 +57,23 @@ asyncLinked action = do
   -- exception (e.g. via 'U.cancel') could arrive after
   -- @handleUnliftIO@ starts to run but before @action@ starts.
   U.mask $ \restore -> do
-  a <- U.async $ handleUnliftIO (\E.ThreadKilled -> return ()) (restore action)
+  a <- U.async $ handleUnliftIO threadKilledHandler (restore action)
   restore $ do
   U.link a
   return a
+
+-- | Handle asynchronous 'E.ThreadKilled' exceptions without killing the parent
+-- thread. All other forms of asynchronous exceptions are rethrown.
+threadKilledHandler :: Monad m => E.AsyncException -> m ()
+threadKilledHandler E.ThreadKilled = return ()
+threadKilledHandler e              = E.throw e
 
 -- | A version of 'U.withAsync' that safely links the child. See
 -- 'asyncLinked'.
 withAsyncLinked :: (U.MonadUnliftIO m) => m () -> (U.Async () -> m a) -> m a
 withAsyncLinked child parent = do
   U.mask $ \restore -> do
-  U.withAsync (handleUnliftIO (\E.ThreadKilled -> return ()) $ restore child) $ \a -> restore $ do
+  U.withAsync (handleUnliftIO threadKilledHandler $ restore child) $ \a -> restore $ do
   U.link a
   parent a
 
