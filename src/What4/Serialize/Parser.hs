@@ -528,25 +528,21 @@ readApp opRaw@(S.WFSAtom (AId operator)) operands = do
         exprAssignment arg_types args >>= \case
           Ctx.Empty Ctx.:> arg1 ->
             liftIO (Some <$> fn sym arg1)
-          _ -> E.throwError "Unable to unpack Op1 arg in Formula.Parser readApp"
       Just (Op2 arg_types fn) -> do
         args <- readExprs operands
         exprAssignment arg_types args >>= \case
           Ctx.Empty Ctx.:> arg1 Ctx.:> arg2 ->
               liftIO (Some <$> fn sym arg1 arg2)
-          _ -> E.throwError "Unable to unpack Op2 arg in Formula.Parser readApp"
       Just (Op3 arg_types fn) -> do
         args <- readExprs operands
         exprAssignment arg_types args >>= \case
           Ctx.Empty Ctx.:> arg1 Ctx.:> arg2 Ctx.:> arg3 ->
               liftIO (Some <$> fn sym arg1 arg2 arg3)
-          _ -> E.throwError "Unable to unpack Op3 arg in Formula.Parser readApp"
       Just (Op4 arg_types fn) -> do
         args <- readExprs operands
         exprAssignment arg_types args >>= \case
           Ctx.Empty Ctx.:> arg1 Ctx.:> arg2 Ctx.:> arg3 Ctx.:> arg4 ->
               liftIO (Some <$> fn sym arg1 arg2 arg3 arg4)
-          _ -> E.throwError "Unable to unpack Op4 arg in Formula.Parser readApp"
       Just (BVOp1 op) -> do
         Some expr <- readOneArg operands
         BVProof _ <- getBVProof expr
