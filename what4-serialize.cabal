@@ -70,7 +70,7 @@ test-suite what4-serialize-tests
                  , libBF
                  , tasty
                  , tasty-hunit
-                 , tasty-hedgehog
+                 , tasty-hedgehog >= 1.2
                  , text
                  , parameterized-utils
                  , async
