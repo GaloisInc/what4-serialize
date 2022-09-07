@@ -1,9 +1,10 @@
 # what4-serialize
 
-In-progress serialization tool for What4 expressions.
+This library is **deprecated** because its functionality has been merged into the core what4 library.
 
-Building
---------
+This library provided a mechanism to serialize what4 terms into an s-expression format (and later deserialize them).
+
+# Building
 
 The dependencies of the project that are not on Hackage are specified using git submodules.  To build the code with a modern version of ``cabal`` (assuming you are in the root of the repository):
 
